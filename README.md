@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.png" alt="Memorigo Logo" width="200">
+  <img src="./memorigo.png" alt="Memorigo Logo" width="200">
 </p>
 
 **memorigo** 是对 Python 版 [Memori](企业 AI 记忆层) 的 Go 语言复现与扩展，目标是在 Go 生态中提供一套：
