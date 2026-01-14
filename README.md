@@ -35,12 +35,13 @@
         - 更新/创建 `entity/process/session/conversation/message`
         - 触发离线增强，写入 `entity_fact` 与会话摘要
 
-- **完全离线增强（Advanced Augmentation 的 Go 版简化）**
+- **语义嵌入与增强（Advanced Augmentation）**
+    - 支持多种嵌入提供商：OpenAI (`text-embedding-ada-002`)、硅基流动、Hash（离线fallback）
     - 后台 goroutine pool，从对话中抽取简单事实（当前按整句/规则抽取）
-    - 生成本地 **hash embedding**（无需外部模型或服务）
+    - 生成语义嵌入向量，支持精确的语义相似度计算
     - Upsert 到 `memori_entity_fact`（带出现次数与最近时间）
     - 更新 `memori_conversation.summary` 简要摘要
-    - 与 Recall 的 embedding/余弦相似度检索打通
+    - 与 Recall 的向量相似度检索打通
 
 ---
 
@@ -120,3 +121,48 @@ go run ./examples/siliconflow
 ```
 
 示例会使用你配置的硅基流动模型（例如 `Pro/Qwen/Qwen2.5-VL-7B-Instruct`），同样自动完成对话写入与增强，并通过 `Recall("favorite city", 5)` 做召回。
+
+---
+
+### 嵌入配置
+
+Memori 支持多种嵌入提供商来生成语义向量：
+
+```bash
+# 嵌入提供商 (默认: hash)
+export MEMORI_EMBEDDING_PROVIDER="openai"  # 或 "siliconflow", "hash"
+
+# OpenAI 嵌入配置
+export MEMORI_EMBEDDING_API_KEY="your-openai-api-key"
+export MEMORI_EMBEDDING_BASE_URL="https://api.openai.com"  # 可选
+
+# 硅基流动嵌入配置
+export MEMORI_EMBEDDING_API_KEY="your-siliconflow-api-key"
+export MEMORI_EMBEDDING_BASE_URL="https://api.siliconflow.cn"  # 可选
+
+# 自定义模型和维度 (可选)
+export MEMORI_EMBEDDING_MODEL="text-embedding-ada-002"
+```
+
+#### 嵌入提供商对比
+
+| 提供商 | 特点 | 适用场景 |
+|--------|------|----------|
+| **OpenAI** | 高质量语义理解，1536维 | 生产环境，精确检索 |
+| **硅基流动** | 中文优化，1024维 | 中文应用，成本敏感 |
+| **Hash** | 完全离线，64维 | 开发测试，无API依赖 |
+
+#### 测试嵌入功能
+
+运行嵌入示例来测试不同提供商：
+
+```bash
+cd memorigo
+
+# 测试所有嵌入提供商
+go run ./examples/embedding
+
+# 或只测试 Hash 嵌入 (默认)
+export MEMORI_EMBEDDING_PROVIDER="hash"
+go run ./examples/embedding
+```

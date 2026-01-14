@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"memorigo/embed"
 	"memorigo/storage"
 )
 
@@ -13,6 +14,7 @@ type Memori struct {
 
 	Storage      *storage.Manager
 	Augmentation *AugmentationManager
+	Embedder     embed.Embedder
 
 	OpenAI *OpenAIProvider
 
@@ -36,6 +38,14 @@ func New(opts ...Option) *Memori {
 	}
 	if m.Augmentation == nil {
 		m.Augmentation = NewAugmentationManager(m)
+	}
+	if m.Embedder == nil {
+		m.Embedder = embed.NewEmbedder(embed.Config{
+			Provider: m.Config.Embedding.Provider,
+			APIKey:   m.Config.Embedding.APIKey,
+			BaseURL:  m.Config.Embedding.BaseURL,
+			Model:    m.Config.Embedding.Model,
+		})
 	}
 
 	m.OpenAI = &OpenAIProvider{m: m}
@@ -96,4 +106,7 @@ func (m *Memori) Recall(query string, limit int) ([]Fact, error) {
 
 var ErrNotImplemented = errors.New("not implemented")
 
-
+// CosineSimilarity 计算两个向量的余弦相似度
+func CosineSimilarity(a, b []float32) float64 {
+	return embed.CosineSimilarity(a, b)
+}

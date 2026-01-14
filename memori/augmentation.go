@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"memorigo/embed"
 	"memorigo/storage"
 )
 
@@ -25,13 +26,15 @@ type AugmentationManager struct {
 	startOnce sync.Once
 	queue     chan AugmentationInput
 	workers   int
+	embedder  embed.Embedder
 }
 
 func NewAugmentationManager(m *Memori) *AugmentationManager {
 	return &AugmentationManager{
-		m:       m,
-		queue:   make(chan AugmentationInput, 1000),
-		workers: 8,
+		m:        m,
+		queue:    make(chan AugmentationInput, 1000),
+		workers:  8,
+		embedder: m.Embedder,
 	}
 }
 
@@ -102,7 +105,11 @@ func (m *AugmentationManager) processInput(in AugmentationInput) {
 	// Upsert entity facts
 	factRepo := repos.EntityFact()
 	for _, f := range facts {
-		emb := embedText(f)
+		emb, err := m.embedder.EmbedText(context.Background(), f)
+		if err != nil {
+			// Log error but continue with next fact
+			continue
+		}
 		embBytes := encodeEmbedding(emb)
 		uniq := hashString(f)
 		_ = factRepo.Upsert(entityID, f, embBytes, uniq)
@@ -162,4 +169,3 @@ func (m *AugmentationManager) Shutdown(ctx context.Context) error {
 	_ = ctx
 	return nil
 }
-

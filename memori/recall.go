@@ -1,16 +1,24 @@
 package memori
 
 import (
+	"context"
 	"fmt"
 
+	"memorigo/embed"
 	"memorigo/storage"
 )
 
 type Recall struct {
-	m *Memori
+	m        *Memori
+	embedder embed.Embedder
 }
 
-func NewRecall(m *Memori) *Recall { return &Recall{m: m} }
+func NewRecall(m *Memori) *Recall {
+	return &Recall{
+		m:        m,
+		embedder: m.Embedder,
+	}
+}
 
 func (r *Recall) SearchFacts(query string, limit int) ([]Fact, error) {
 	if r.m.Storage == nil || r.m.Storage.Driver() == nil {
@@ -36,7 +44,10 @@ func (r *Recall) SearchFacts(query string, limit int) ([]Fact, error) {
 		return nil, nil
 	}
 
-	queryEmbedding := embedText(query)
+	queryEmbedding, err := r.embedder.EmbedText(context.Background(), query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query: %w", err)
+	}
 	embLimit := limit * 10
 	if embLimit < limit {
 		embLimit = limit
@@ -58,4 +69,3 @@ func (r *Recall) SearchFacts(query string, limit int) ([]Fact, error) {
 	}
 	return out, nil
 }
-
