@@ -1,92 +1,107 @@
 package embed
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
+const defaultOpenAIModel = "text-embedding-3-small"
+
+var openAIModelDimensions = map[string]int{
+	"text-embedding-3-small": 1536,
+	"text-embedding-3-large": 3072,
+	"text-embedding-ada-002": 1536,
+}
+
 type OpenAIEmbedder struct {
-	config    Config
 	client    *http.Client
 	baseURL   string
 	apiKey    string
 	model     string
-	dimension int
+	dimension atomic.Int64
+	// sendDimensions is true when the caller explicitly configured a dimension
+	// and the model supports the OpenAI "dimensions" parameter.
+	sendDimensions bool
 }
 
-type OpenAIEmbeddingRequest struct {
-	Input          interface{} `json:"input"` // string or []string
-	Model          string      `json:"model"`
-	EncodingFormat string      `json:"encoding_format,omitempty"`
-	Dimensions     int         `json:"dimensions,omitempty"`
-	User           string      `json:"user,omitempty"`
+type openAIEmbeddingRequest struct {
+	Input          any    `json:"input"`
+	Model          string `json:"model"`
+	EncodingFormat string `json:"encoding_format,omitempty"`
+	Dimensions     int    `json:"dimensions,omitempty"`
+	User           string `json:"user,omitempty"`
 }
 
-type OpenAIEmbeddingResponse struct {
-	Object string `json:"object"`
-	Data   []struct {
-		Object    string    `json:"object"`
-		Embedding []float32 `json:"embedding"`
-		Index     int       `json:"index"`
-	} `json:"data"`
-	Model string `json:"model"`
-	Usage struct {
+type embeddingItem struct {
+	Object    string    `json:"object"`
+	Embedding []float32 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+type openAIEmbeddingResponse struct {
+	Object string          `json:"object"`
+	Data   []embeddingItem `json:"data"`
+	Model  string          `json:"model"`
+	Usage  struct {
 		PromptTokens int `json:"prompt_tokens"`
 		TotalTokens  int `json:"total_tokens"`
 	} `json:"usage"`
 }
 
 func NewOpenAIEmbedder(config Config) *OpenAIEmbedder {
-	baseURL := config.BaseURL
+	baseURL := strings.TrimRight(config.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
-
 	model := config.Model
 	if model == "" {
-		model = "text-embedding-ada-002"
+		model = defaultOpenAIModel
 	}
 
-	// text-embedding-ada-002 has 1536 dimensions
 	dimension := config.Dimension
-	if dimension == 0 {
-		dimension = 1536
+	if dimension <= 0 {
+		if d, ok := openAIModelDimensions[model]; ok {
+			dimension = d
+		} else {
+			dimension = openAIModelDimensions[defaultOpenAIModel]
+		}
 	}
+	sendDimensions := config.Dimension > 0 && strings.HasPrefix(model, "text-embedding-3")
 
-	return &OpenAIEmbedder{
-		config:    config,
-		client:    &http.Client{Timeout: 30 * time.Second},
-		baseURL:   baseURL,
-		apiKey:    config.APIKey,
-		model:     model,
-		dimension: dimension,
+	e := &OpenAIEmbedder{
+		client:         &http.Client{Timeout: 60 * time.Second},
+		baseURL:        baseURL,
+		apiKey:         config.APIKey,
+		model:          model,
+		sendDimensions: sendDimensions,
 	}
+	e.dimension.Store(int64(dimension))
+	return e
 }
 
 func (e *OpenAIEmbedder) EmbedText(ctx context.Context, text string) ([]float32, error) {
-	if text == "" {
-		return make([]float32, e.dimension), nil
+	if strings.TrimSpace(text) == "" {
+		return make([]float32, e.Dimension()), nil
 	}
 
-	req := OpenAIEmbeddingRequest{
-		Input: text,
-		Model: e.model,
+	req := openAIEmbeddingRequest{Input: text, Model: e.model}
+	if e.sendDimensions {
+		req.Dimensions = e.Dimension()
 	}
-
-	resp, err := e.makeRequest(ctx, req)
-	if err != nil {
+	var resp openAIEmbeddingResponse
+	if err := postJSON(ctx, e.client, embeddingEndpoint(e.baseURL), e.apiKey, req, &resp); err != nil {
 		return nil, err
 	}
-
 	if len(resp.Data) == 0 {
-		return nil, fmt.Errorf("no embedding data returned")
+		return nil, fmt.Errorf("embedding api returned no data")
 	}
-
+	if got := len(resp.Data[0].Embedding); got > 0 {
+		e.dimension.Store(int64(got))
+	}
 	return resp.Data[0].Embedding, nil
 }
 
@@ -95,89 +110,53 @@ func (e *OpenAIEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 		return nil, nil
 	}
 
-	// Filter out empty texts
-	var filtered []string
-	for _, text := range texts {
-		if text != "" {
-			filtered = append(filtered, text)
-		}
-	}
-
-	if len(filtered) == 0 {
-		result := make([][]float32, len(texts))
-		for i := range result {
-			result[i] = make([]float32, e.dimension)
-		}
-		return result, nil
-	}
-
-	req := OpenAIEmbeddingRequest{
-		Input: filtered,
-		Model: e.model,
-	}
-
-	resp, err := e.makeRequest(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(resp.Data) != len(filtered) {
-		return nil, fmt.Errorf("expected %d embeddings, got %d", len(filtered), len(resp.Data))
-	}
-
-	result := make([][]float32, len(texts))
-	filteredIndex := 0
+	out := make([][]float32, len(texts))
+	idx := make([]int, 0, len(texts))
+	inputs := make([]string, 0, len(texts))
 	for i, text := range texts {
-		if text == "" {
-			result[i] = make([]float32, e.dimension)
-		} else {
-			result[i] = resp.Data[filteredIndex].Embedding
-			filteredIndex++
+		if strings.TrimSpace(text) == "" {
+			out[i] = make([]float32, e.Dimension())
+			continue
+		}
+		idx = append(idx, i)
+		inputs = append(inputs, text)
+	}
+	if len(inputs) == 0 {
+		return out, nil
+	}
+
+	const batchSize = 64
+	for start := 0; start < len(inputs); start += batchSize {
+		end := start + batchSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		batch := inputs[start:end]
+		req := openAIEmbeddingRequest{Input: batch, Model: e.model}
+		if e.sendDimensions {
+			req.Dimensions = e.Dimension()
+		}
+		var resp openAIEmbeddingResponse
+		if err := postJSON(ctx, e.client, embeddingEndpoint(e.baseURL), e.apiKey, req, &resp); err != nil {
+			return nil, err
+		}
+		vectors, err := orderedEmbeddings(resp.Data, len(batch))
+		if err != nil {
+			return nil, err
+		}
+		for j, vec := range vectors {
+			if len(vec) == 0 {
+				return nil, fmt.Errorf("embedding api returned an empty vector")
+			}
+			e.dimension.Store(int64(len(vec)))
+			out[idx[start+j]] = vec
 		}
 	}
-
-	return result, nil
+	return out, nil
 }
 
-func (e *OpenAIEmbedder) makeRequest(ctx context.Context, req OpenAIEmbeddingRequest) (*OpenAIEmbeddingResponse, error) {
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
+func (e *OpenAIEmbedder) Dimension() int { return int(e.dimension.Load()) }
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/v1/embeddings", bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+func (e *OpenAIEmbedder) Provider() string { return "openai" }
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	if e.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
-	}
-
-	resp, err := e.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var embeddingResp OpenAIEmbeddingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &embeddingResp, nil
-}
-
-func (e *OpenAIEmbedder) Dimension() int {
-	return e.dimension
-}
-
-func (e *OpenAIEmbedder) Provider() string {
-	return "openai"
-}
+func (e *OpenAIEmbedder) Model() string { return e.model }

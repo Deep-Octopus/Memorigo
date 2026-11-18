@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible problem in Memorigo
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove API keys, database contents and
+        personal data before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: v1.0.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      options:
+        - SQLite
+        - PostgreSQL
+        - MongoDB
+        - In-memory / tests
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Go SDK
+        - Automatic injection
+        - MCP stdio
+        - MCP HTTP
+        - Evaluation harness
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code or commands, expected behavior and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed secrets and personal data.
+          required: true
+        - label: I searched existing issues.
+          required: true

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a capability or design change
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem does this solve? Include the workload and scale.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the API/behavior you would like. Note alternatives considered.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or benchmark plan
+      description: How would we know this is better? Recall, latency, token or cost.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This can keep the default build pure Go (CGO disabled).
+        - label: This does not require an LLM call on the synchronous write path.

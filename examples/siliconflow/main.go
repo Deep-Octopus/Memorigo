@@ -6,11 +6,11 @@ import (
 	"os"
 	"time"
 
-	"memorigo/memori"
+	"github.com/Deep-Octopus/Memorigo/memori"
 )
 
-// Example: SiliconFlow + SQLite (in-memory) with one-line registration.
-// Requires: SILICONFLOW_API_KEY, optional SILICONFLOW_BASE_URL (default https://api.siliconflow.cn)
+// Example: SiliconFlow + SQLite (in-memory) with automatic memory injection.
+// Requires: SILICONFLOW_API_KEY, optional SILICONFLOW_BASE_URL.
 func main() {
 	if os.Getenv("SILICONFLOW_API_KEY") == "" {
 		fmt.Println("SILICONFLOW_API_KEY not set; skipping SiliconFlow example")
@@ -21,25 +21,30 @@ func main() {
 	defer cleanup()
 
 	m := memori.New(memori.WithStorageConn(db))
-	if err := m.Storage.Build(); err != nil {
+	defer m.Close()
+
+	if err := m.TryAttribution("user-sf", "demo-bot"); err != nil {
 		panic(err)
 	}
 
-	m.Attribution("user-sf", "demo-bot")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
-	client := memori.NewSiliconFlowClient()
-	m.OpenAI.Register(client)
+	if _, err := m.Remember("My favorite city is Beijing"); err != nil {
+		panic(err)
+	}
 
+	m.OpenAI.Register(memori.NewSiliconFlowClient())
 	memClient := m.OpenAIClient()
 
 	req := memori.ChatCompletionsRequest{
-		Model: "Pro/Qwen/Qwen2.5-VL-7B-Instruct", // or SiliconFlow-specific model name
+		Model: "Pro/Qwen/Qwen2.5-VL-7B-Instruct", // or another SiliconFlow model
 		Messages: []memori.ChatMessage{
-			{Role: "user", Content: "My favorite city is Beijing."},
+			{Role: "user", Content: "Which city do I like most?"},
 		},
 	}
 
-	resp, err := memClient.ChatCompletionsCreate(context.Background(), req)
+	resp, err := memClient.ChatCompletionsCreate(ctx, req)
 	if err != nil {
 		panic(err)
 	}
@@ -49,15 +54,16 @@ func main() {
 		fmt.Println(resp.Choices[0].Message.Content)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	if err := m.Flush(ctx); err != nil {
+		panic(err)
+	}
 
 	facts, err := m.Recall("favorite city", 5)
 	if err != nil {
 		panic(err)
 	}
-
 	fmt.Println("Recall results:")
 	for i, f := range facts {
-		fmt.Printf("%d) score=%.4f times=%d content=%q\n", i+1, f.Score, f.NumTimes, f.Content)
+		fmt.Printf("%d) score=%.4f slot=%q content=%q\n", i+1, f.Score, f.Slot, f.Content)
 	}
 }

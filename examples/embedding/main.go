@@ -5,9 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"time"
 
-	"memorigo/memori"
+	"github.com/Deep-Octopus/Memorigo/memori"
 	_ "modernc.org/sqlite"
 )
 
@@ -59,12 +58,9 @@ func runEmbeddingExample(provider, apiKey, baseURL string) {
 	db, cleanup := openInMemorySQLite()
 	defer cleanup()
 
-	// Create Memori instance with storage
+	// Create Memori instance with storage (migrations run automatically).
 	m := memori.New(memori.WithStorageConn(db))
-	if err := m.Storage.Build(); err != nil {
-		fmt.Printf("Failed to build storage: %v\n", err)
-		return
-	}
+	defer m.Close()
 
 	// Show embedding info
 	fmt.Printf("Embedding provider: %s\n", m.Embedder.Provider())
@@ -123,8 +119,11 @@ func runEmbeddingExample(provider, apiKey, baseURL string) {
 		return
 	}
 
-	// Wait for augmentation
-	time.Sleep(100 * time.Millisecond)
+	// Wait for augmentation.
+	if err := m.Flush(context.Background()); err != nil {
+		fmt.Printf("Error flushing augmentation: %v\n", err)
+		return
+	}
 
 	// Test recall
 	facts, err := m.Recall("programming language", 5)

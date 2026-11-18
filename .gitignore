@@ -1,0 +1,29 @@
+# Binaries
+/bin/
+/memorigo-mcp
+/memorigo-eval
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment / secrets
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Go workspace
+go.work
+go.work.sum

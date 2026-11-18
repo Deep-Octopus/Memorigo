@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/Deep-Octopus/Memorigo/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
+  - name: Documentation
+    url: https://github.com/Deep-Octopus/Memorigo#readme
+    about: Read the README, architecture and MCP guides first.

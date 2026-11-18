@@ -1,168 +1,484 @@
 <p align="center">
-  <img src="./memorigo.png" alt="Memorigo Logo" width="200">
+  <img src="./memorigo.png" alt="Memorigo" width="180">
 </p>
 
-**memorigo** 是对 Python 版 [Memori](企业 AI 记忆层) 的 Go 语言复现与扩展，目标是在 Go 生态中提供一套：
+<h1 align="center">Memorigo</h1>
 
-- **LLM 无关**：目前仅支持 OpenAI 与硅基流动（OpenAI-compatible），后续可扩展其它模型
-- **存储无关**：统一封装 SQLite / PostgreSQL / MongoDB 的 schema 与读写逻辑
-- **自动记忆**：在不侵入业务代码的前提下，自动持久化 LLM 对话，并支持语义 Recall
-- **离线增强**：完全离线的事实抽取 + 摘要增强，不依赖 Memori 云 API
+<p align="center">
+  <strong>Go Agent 的生产级长期记忆层。</strong><br>
+  从对话到可引用上下文，一条流水线完成：写入 · 抽取 · 时态治理 · 混合召回 · Token 预算 · MCP 分发。
+</p>
 
-整体设计严格对齐原 Python 项目的架构（Core / Storage / Memory / Augmentation），但用 Go 的静态类型与接口重写了一套更贴合 Go 开发习惯的 SDK。
+<p align="center">
+  <a href="https://github.com/Deep-Octopus/Memorigo/actions"><img alt="CI" src="https://github.com/Deep-Octopus/Memorigo/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white">
+  <img alt="CGO" src="https://img.shields.io/badge/CGO-disabled-6f42c1">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-1f6feb">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
 
----
-
-### 核心能力
-
-- **Memori 核心对象**
-    - `memori.New(...)` 创建实例
-    - `Attribution(entityID, processID)` 设置归因（用户、进程/Agent）
-    - `NewSession()/SetSession()` 控制会话
-    - `Recall(query, limit)` 语义召回事实
-
-- **多存储支持**
-    - SQLite：用于本地开发 / 内存测试
-    - PostgreSQL：生产数据库
-    - MongoDB：文档型存储
-    - 通过 `WithStorageConn(conn)` 传入 `*sql.DB` 或 `*mongo.Database`，内部自动选择 adapter/driver 并执行 migrations
-
-- **OpenAI / 硅基流动 一体化接入**
-    - `NewOpenAIClient()` / `NewSiliconFlowClient()` 创建 OpenAI-compatible client
-    - `mem.OpenAI.Register(client)` 一行完成绑定
-    - 使用 `mem.OpenAIClient().ChatCompletionsCreate/Stream` 调用 LLM 时，会自动：
-        - 记录请求 messages 与模型回复
-        - 更新/创建 `entity/process/session/conversation/message`
-        - 触发离线增强，写入 `entity_fact` 与会话摘要
-
-- **语义嵌入与增强（Advanced Augmentation）**
-    - 支持多种嵌入提供商：OpenAI (`text-embedding-ada-002`)、硅基流动、Hash（离线fallback）
-    - 后台 goroutine pool，从对话中抽取简单事实（当前按整句/规则抽取）
-    - 生成语义嵌入向量，支持精确的语义相似度计算
-    - Upsert 到 `memori_entity_fact`（带出现次数与最近时间）
-    - 更新 `memori_conversation.summary` 简要摘要
-    - 与 Recall 的向量相似度检索打通
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#上下文引擎">上下文引擎</a> ·
+  <a href="#mcp-server">MCP Server</a> ·
+  <a href="#评测与性能">评测与性能</a> ·
+  <a href="docs/ARCHITECTURE.md">架构</a> ·
+  <a href="docs/ROADMAP.md">路线图</a>
+</p>
 
 ---
 
-### 目录结构简要
+## 为什么是 Memorigo
 
-- `memori/`
-    - `memori.go`：`Memori` 主入口（配置、存储、增强、OpenAI provider）
-    - `config.go`：`Config/Cache`，统一 Session/LLM/Storage 配置
-    - `writer.go`：将对话写入存储，并触发增强（事务 + 重试）
-    - `recall.go`：`Recall.SearchFacts` 实现语义召回
-    - `augmentation.go`：离线增强 manager（异步队列 + facts/summary 抽取）
-    - `openai_compat.go`：OpenAI-compatible HTTP client
-    - `openai_memori_client.go`：包装器，自动把 LLM 调用持久化并增强
-- `storage/`
-    - `manager.go` / `registry.go`：adapter/driver 注册与选择
-    - `adapter_sql.go` / `adapter_mongo.go`：`*sql.DB` / `*mongo.Database` 适配
-    - `driver_sql.go` / `driver_mongo.go`：dialect 识别与 migrations
-    - `migrations_*.go`：SQLite/Postgres/Mongo 的建表/索引迁移
-    - `repos.go`：Entity/Process/Session/Conversation/Message/EntityFact repo 实现（含 embedding 相似度计算）
+大多数“Agent 记忆”项目只解决其中一层：要么是一个向量库封装，要么是一个托管 API，要么是一个只跑 demo 的抽取脚本。Memorigo 把**整条记忆链路**做成了一个可自托管、可测试、可部署的 Go 库：
+
+- **不是向量库的薄封装**：事实抽取、slot 时态覆盖、稠密 + BM25 + 新近度 + 频率混合排序、token 预算上下文、引用回链全部内置。
+- **不是托管 API 的客户端**：数据留在你的 SQLite / PostgreSQL / MongoDB；hash 嵌入 + 启发式抽取可以完全离线运行。
+- **不是 demo**：11 个确定性评测场景、MCP stdio/HTTP、Docker 镜像、跨平台 release 构建和 race 测试都已接通。
+
+> Memorigo 的定位是 **BYODB + 数据不出域 + 单二进制分发**。与 Python 版 [Memori](https://github.com/MemoriLabs/Memori) 的架构思路对齐，但存储、检索、上下文与分发层用 Go 重新实现。
+
+### 能力对比
+
+| 能力 | Memorigo | 典型向量库封装 | 典型托管记忆 API |
+|---|---|---|---|
+| 数据驻留 | 你的数据库/文件 | 你的数据库 | 厂商云 |
+| 事实抽取 + slot 覆盖 | 内置 | 需自建 | 有 |
+| 稠密 + BM25 + 新近度 + 频率 | 内置 | 通常仅向量 | 部分 |
+| Token 预算 + 引用上下文 | 内置 | 需自建 | 部分 |
+| 原始消息证据双通道 | 内置 | 需自建 | 少见 |
+| MCP stdio + HTTP | 内置 | 通常无 | 部分 |
+| 完全离线运行 | hash + heuristic | 取决于实现 | 否 |
+| 可审计软删除 + 来源追踪 | 内置 | 取决于实现 | 部分 |
 
 ---
 
-### 快速开始（SQLite 内存库）
+## 架构
+
+```mermaid
+flowchart LR
+    A[对话 / Writer] --> B[(原始消息)]
+    A --> C[异步抽取]
+    C --> D[事实 + slot]
+    D --> E[嵌入]
+    E --> F{冲突消解}
+    F -->|同一互斥 slot| G[旧事实 superseded]
+    F -->|新事实| H[(active facts)]
+    Q[用户问题] --> J[候选扫描]
+    H --> J
+    J --> K[稠密 + BM25 + 新近度 + 频率]
+    K --> L[Top-K 事实]
+    L --> M[BuildContext<br/>Token 预算 + 引用]
+    B -. 原始消息证据 .-> M
+    M --> N[自动注入 / MCP / SDK]
+```
+
+完整设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。几个关键决策：
+
+- **写路径幂等**：同一 session 内客户端重发完整历史不会重复落库或膨胀 `num_times`。
+- **只落库原始消息**：注入的记忆块不会污染后续对话历史。
+- **事实与证据双通道**：抽取遗漏时，原始消息仍能作为引用证据进入上下文。
+- **默认纯 Go**：`CGO_ENABLED=0` 可构建；SQLite 使用 `modernc.org/sqlite`。
+
+---
+
+## 快速开始
+
+要求 **Go 1.25+**（官方 MCP Go SDK 的最低版本）。
 
 ```bash
-cd memorigo
+go get github.com/Deep-Octopus/Memorigo
+```
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/Deep-Octopus/Memorigo/memori"
+	_ "modernc.org/sqlite"
+)
+
+func main() {
+	db, err := sql.Open("sqlite", "file:memorigo.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	// 自动建表 / 迁移；不需要手动 Build。
+	m := memori.New(memori.WithStorageConn(db))
+	defer m.Close()
+
+	if err := m.TryAttribution("user-42", "support-agent"); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 写入一轮对话。只写新增消息；客户端重发历史不会重复落库。
+	err = memori.NewWriter(m).Execute(ctx, memori.ConversationPayload{
+		Messages: []memori.Message{
+			{Role: "user", Content: "My favorite color is blue"},
+			{Role: "user", Content: "I live in Shanghai"},
+		},
+		Response: &memori.Message{Role: "assistant", Content: "Noted."},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	// 等待后台抽取 / 嵌入 / 冲突消解完成。
+	if err := m.Flush(ctx); err != nil {
+		panic(err)
+	}
+
+	// 检索事实。
+	facts, err := m.Recall("favorite color", 5)
+	if err != nil {
+		panic(err)
+	}
+	for _, f := range facts {
+		fmt.Printf("%.3f  %s  [%s]\n", f.Score, f.Content, f.Slot)
+	}
+
+	// 组装带引用、受 token 预算约束的上下文。
+	pkg, err := m.BuildContext(ctx, "What does the user prefer?", memori.ContextOptions{
+		TokenBudget: 600,
+		IncludeRaw:  true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(pkg.Text)
+}
+```
+
+运行仓库内示例：
+
+```bash
 go run ./examples/sqlite
+go run ./examples/postgres     # 需要 POSTGRES_DSN
+go run ./examples/mongodb      # 需要 MONGODB_URI
 ```
-
-这个示例会：
-
-1. 使用内存 SQLite 执行 schema migrations
-2. 写入一段对话 `"My favorite color is blue"`
-3. 离线增强自动把这句话变成 fact 写入 `entity_fact`
-4. `Recall("favorite color", 5)` 会返回按相似度排序的事实列表
 
 ---
 
-### OpenAI 一体化示例
+## 上下文引擎
 
-确保已设置：
+`BuildContext` 把“长期事实”和“原始对话证据”放进同一个 token 预算，并返回稳定引用。事实优先占用预算，原始消息填充剩余空间；抽取遗漏时仍有证据兜底，而注入不会无限膨胀。
 
-```bash
-set OPENAI_API_KEY=your_openai_key
+```go
+pkg, err := m.BuildContext(ctx, "What does the user prefer?", memori.ContextOptions{
+	TokenBudget: 600,   // 0 使用 MEMORI_CONTEXT_BUDGET（默认 800）
+	IncludeRaw:  true,  // 加入相关原始消息
+	RawLimit:    4,     // 最多 4 条
+	RawScan:     200,   // 扫描最近 200 条消息
+})
 ```
 
-然后运行：
+| 字段 | 含义 |
+|---|---|
+| `Text` | 以 `<memory_context>` 包裹的 prompt-ready 文本 |
+| `Facts` / `Messages` | 结构化结果；消息可跨 session 检索同一 entity |
+| `Citations` | `fact:<id>` / `msg:<id>`，可回链到原始来源 |
+| `Tokens` / `Budget` / `Truncated` | 估算用量、生效预算、是否裁剪 |
+| `FactCount` / `RawCount` | 两条通道各自命中的条数 |
 
-```bash
-cd memorigo
-go run ./examples/openai
+自动注入复用同一引擎，但只走事实通道，默认预算 800 token。完整算法见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#75-上下文组装)。
+
+### 混合召回
+
+召回不是单一余弦相似度。候选集内按归一化权重融合四路信号：
+
+```text
+score = 0.60 * cosine_similarity
+      + 0.20 * bm25_lexical
+      + 0.10 * exp(-ln2 * age / half_life)
+      + 0.10 * log1p(num_times) / log1p(max_num_times)
 ```
 
-示例逻辑：
+- 词法通道同时支持英文单词与中日韩字符 bigram。
+- 有相关度闸门：查询有词元时，必须命中词法或达到最低余弦相似度。
+- 权重、半衰期、扫描上限、最低分均可配置。
+- 返回 `Score`、`Similarity`、`LexicalScore`、`NumTimes`、`Slot`，便于调试。
 
-1. 通过 `NewOpenAIClient()` 创建 OpenAI client，并 `mem.OpenAI.Register(client)`
-2. 用 `mem.OpenAIClient().ChatCompletionsCreate(...)` 调用 `gpt-4o-mini`
-3. 调用结束后自动写入对话 + 触发增强
-4. 使用 `mem.Recall("favorite programming language", 5)` 召回对应事实
+### 时态事实
+
+每条事实可带 `slot` 与 `status`。互斥 slot（`profile.*`、`favorite.*`、`sentiment.*`、`health.allergy.*`）写入新值时，旧事实变为 `superseded`，不再参与召回，但保留审计记录。`Forget(id)` 执行软删除。自动抽取不会因为旧对话被重放而把 `superseded` / `deleted` 事实复活；只有显式 `Remember` / `memory_remember` 才会重新激活。
 
 ---
 
-### 硅基流动一体化示例
+## MCP Server
 
-确保已设置：
-
-```bash
-set SILICONFLOW_API_KEY=your_siliconflow_key
-set SILICONFLOW_BASE_URL=https://api.siliconflow.cn   # 可选，默认即为此
-```
-
-运行：
+Memorigo 可以直接作为 MCP server 接入 Claude Desktop、Claude Code、Cursor 等客户端。
 
 ```bash
-cd memorigo
-go run ./examples/siliconflow
+# 方式一：从源码构建
+CGO_ENABLED=0 go build -o bin/memorigo-mcp ./cmd/memorigo-mcp
+./bin/memorigo-mcp -version
+
+# 方式二：安装到 GOPATH/bin
+go install github.com/Deep-Octopus/Memorigo/cmd/memorigo-mcp@latest
 ```
 
-示例会使用你配置的硅基流动模型（例如 `Pro/Qwen/Qwen2.5-VL-7B-Instruct`），同样自动完成对话写入与增强，并通过 `Recall("favorite city", 5)` 做召回。
+### stdio：本地 Agent
+
+```json
+{
+  "mcpServers": {
+    "memorigo": {
+      "command": "/absolute/path/to/bin/memorigo-mcp",
+      "args": ["-db", "/Users/you/.memorigo/memory.db"]
+    }
+  }
+}
+```
+
+### HTTP：远程 Agent / 容器
+
+```bash
+export MEMORI_MCP_TOKEN="$(openssl rand -hex 32)"
+./bin/memorigo-mcp -http -addr 127.0.0.1:8787 -db /var/lib/memorigo/memory.db
+```
+
+- MCP endpoint：`http://127.0.0.1:8787/mcp`
+- 健康检查：`http://127.0.0.1:8787/healthz`
+- 默认要求 `Authorization: Bearer <token>`；匿名模式必须显式 `-allow-anonymous`。
+- 支持直接 TLS（`-tls-cert` / `-tls-key`），也支持在反向代理后终止 TLS。
+
+### Docker
+
+```bash
+docker build -t memorigo-mcp .
+docker run --rm -p 8787:8787 \
+  -e MEMORI_MCP_TOKEN="$(openssl rand -hex 32)" \
+  -v memorigo-data:/data \
+  memorigo-mcp
+```
+
+### 工具面
+
+| 工具 | 作用 |
+|---|---|
+| `memory_search` | 混合召回，返回事实、分数与 slot |
+| `memory_context` | 组装带引用、受 token 预算约束的上下文 |
+| `memory_remember` | 显式写入事实；互斥 slot 自动覆盖旧值 |
+| `memory_forget` | 按 id 软删除 |
+| `memory_profile` | 列出当前 entity 的活跃事实 |
+| `memory_stats` | 事实数、积压任务、嵌入模型/维度、存储方言 |
+
+每个工具都支持可选的 `entity_id`，用于按用户隔离。详细配置、安全边界和排错见 [docs/MCP.md](docs/MCP.md)。
 
 ---
 
-### 嵌入配置
+## 评测与性能
 
-Memori 支持多种嵌入提供商来生成语义向量：
-
-```bash
-# 嵌入提供商 (默认: hash)
-export MEMORI_EMBEDDING_PROVIDER="openai"  # 或 "siliconflow", "hash"
-
-# OpenAI 嵌入配置
-export MEMORI_EMBEDDING_API_KEY="your-openai-api-key"
-export MEMORI_EMBEDDING_BASE_URL="https://api.openai.com"  # 可选
-
-# 硅基流动嵌入配置
-export MEMORI_EMBEDDING_API_KEY="your-siliconflow-api-key"
-export MEMORI_EMBEDDING_BASE_URL="https://api.siliconflow.cn"  # 可选
-
-# 自定义模型和维度 (可选)
-export MEMORI_EMBEDDING_MODEL="text-embedding-ada-002"
-```
-
-#### 嵌入提供商对比
-
-| 提供商 | 特点 | 适用场景 |
-|--------|------|----------|
-| **OpenAI** | 高质量语义理解，1536维 | 生产环境，精确检索 |
-| **硅基流动** | 中文优化，1024维 | 中文应用，成本敏感 |
-| **Hash** | 完全离线，64维 | 开发测试，无API依赖 |
-
-#### 测试嵌入功能
-
-运行嵌入示例来测试不同提供商：
+### 确定性回归
 
 ```bash
-cd memorigo
-
-# 测试所有嵌入提供商
-go run ./examples/embedding
-
-# 或只测试 Hash 嵌入 (默认)
-export MEMORI_EMBEDDING_PROVIDER="hash"
-go run ./examples/embedding
+go run ./cmd/memorigo-eval
+go run ./cmd/memorigo-eval -json
+make eval
 ```
+
+11 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。
+
+```text
+accuracy: 11/11 (100.0%)  avg latency: 134µs  p95: 215µs  avg tokens: 17
+```
+
+（示例输出；延迟随机器与负载波动。）
+
+工程验证：
+
+```bash
+make test      # 单元 + 集成
+make race      # race detector
+make check     # gofmt + vet + build + test + eval
+```
+
+### 微基准
+
+```bash
+make bench
+# 或显式指定：
+go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
+```
+
+1,000 条事实，Apple M5，Go 1.26.3：
+
+| Benchmark | Time / op | Allocated / op | Allocs / op |
+|---|---:|---:|---:|
+| `Recall` (top-5) | ~11 ms | ~5.5 MB | ~40k |
+| `BuildContext` (800-token) | ~10 ms | ~5.5 MB | ~40k |
+
+当前召回是候选集扫描 + Go 内打分，行为可预测、无需外部索引；ANN / FTS5 + RRF 是下一阶段的性能升级。评测方法与局限见 [docs/EVALUATION.md](docs/EVALUATION.md)。
+
+---
+
+## 存储与部署
+
+| 后端 | 接入 | 事务 | 适用场景 |
+|---|---|---|---|
+| SQLite | `*sql.DB`（modernc.org/sqlite） | 真实事务 | 单进程、本地 Agent、边缘部署 |
+| PostgreSQL | `*sql.DB`（pgx stdlib） | 真实事务 + 串行化失败重试 | 多进程、生产推荐 |
+| MongoDB | `*mongo.Database` | 单机无事务 | 已有 Mongo 基础设施 |
+
+迁移在 `New()` 时自动执行，也可以显式调用 `m.Storage.Build()`（幂等）。schema 包含 entity / process / session / conversation / message / fact，以及可选的 subject-predicate-object 知识图基础表。
+
+生产检查清单：
+
+- SQLite 开启 WAL 与 `busy_timeout`，并确保只有一个写入进程；多进程请使用 PostgreSQL。
+- 为每个终端用户使用独立 `entity_id`，不要把 MCP 默认 entity 共享给多租户。
+- 固定嵌入模型与维度；更换后调用 `Reindex(ctx)`。
+- 备份数据库文件/实例；SQLite 使用 WAL 时请包含 `-wal` / `-shm`，或先 checkpoint；软删除不等于物理删除。
+- MCP HTTP 使用长随机 token、TLS 或可信反向代理；只读客户端使用 `-readonly`。
+- 监控 `Stats(ctx)`、队列积压、嵌入错误与 `/healthz`。
+
+---
+
+## 配置
+
+所有配置可由环境变量提供，也可以在 `New(WithConfig(...))` 中覆盖。常用项：
+
+### 核心
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORI_RECALL_LIMIT` | `5` | 默认召回条数 |
+| `MEMORI_CONTEXT_BUDGET` | `800` | `BuildContext` / 自动注入的 token 预算 |
+| `MEMORI_AUTO_INJECT` | `true` | 是否自动注入记忆 |
+| `MEMORI_INJECT_LIMIT` | `5` | 单次注入事实条数 |
+| `MEMORI_MEMORY_PROMPT` | 内置模板 | 必须含 `{{facts}}` |
+| `MEMORI_OP_TIMEOUT` | `20s` | 单次召回/操作超时 |
+| `MEMORI_LOG_LEVEL` | `error` | `debug/info/warn/error/off` |
+
+### 嵌入与抽取
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORI_EMBEDDING_PROVIDER` | `hash` | `hash` / `openai` / `siliconflow` |
+| `MEMORI_EMBEDDING_API_KEY` | — | 远程嵌入密钥 |
+| `MEMORI_EMBEDDING_MODEL` | 提供商默认 | 如 `text-embedding-3-small`、`BAAI/bge-m3` |
+| `MEMORI_EMBEDDING_DIMENSION` | `0`（提供商默认） | 自定义维度 |
+| `MEMORI_EXTRACTION_PROVIDER` | `heuristic` | `heuristic` / `llm` / `off` |
+| `MEMORI_EXTRACTION_MODEL` | 最近一次聊天模型 | LLM 抽取模型 |
+| `MEMORI_EXTRACTION_MAX_FACTS` | `20` | 单轮最多事实数 |
+| `MEMORI_EXTRACTION_MERGE_THRESHOLD` | `0.97` | 无语义槽位事实的近重复阈值 |
+
+### 召回
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORI_RECALL_SCAN_LIMIT` | `2000` | 候选事实扫描上限 |
+| `MEMORI_RECALL_MIN_SCORE` | `0.05` | 最低融合分 |
+| `MEMORI_RECALL_MIN_SIMILARITY` | `0.10` | 最低余弦相似度闸门 |
+| `MEMORI_RECALL_WEIGHT_*` | `0.60/0.20/0.10/0.10` | 相似度/词法/新近度/频率权重 |
+| `MEMORI_RECALL_RECENCY_HALF_LIFE` | `168h` | 新近度半衰期 |
+
+完整列表见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与源码 `memori/config.go`。
+
+---
+
+## API 速查
+
+```go
+// 身份与生命周期
+m := memori.New(memori.WithStorageConn(db))
+m.TryAttribution("user-42", "agent-7")
+m.NewSession()
+m.Flush(ctx)
+m.Close()                 // 不关闭用户传入的 db
+
+// 写入
+memori.NewWriter(m).Execute(ctx, memori.ConversationPayload{...})
+m.Remember("I prefer window seats")   // 同步；返回 fact id
+m.Forget(factID)
+
+// 读取
+facts, _ := m.Recall("seat preference", 5)
+mc, _ := m.MemoryContext(ctx, "seat preference", 5)
+text, _ := m.ContextText(ctx, "seat preference", 5)
+pkg, _ := m.BuildContext(ctx, "seat preference", memori.ContextOptions{
+    TokenBudget: 600, IncludeRaw: true,
+})
+profile, _ := m.Facts(20)
+stats, _ := m.Stats(ctx)
+
+// 维护
+n, _ := m.Reindex(ctx)    // 嵌入模型/维度变化后重建
+```
+
+---
+
+## 项目结构
+
+```text
+memori/       Memori 门面、Writer、增强流水线、召回排序、抽取器、上下文组装、OpenAI 兼容层
+storage/      Repos 抽象、SQL/Mongo 实现、迁移、事务
+embed/        嵌入接口、hash/OpenAI/硅基流动、LRU 缓存、HTTP 重试
+textutil/     归一化、分词（英文 + CJK bigram）、句子切分、token 估算
+mcpserver/    MCP 工具面 + stdio/HTTP 适配
+eval/         确定性评测场景、报告、JSON 输出
+cmd/          memorigo-eval、memorigo-mcp
+internal/     版本与构建元数据
+Dockerfile    多阶段 MCP 镜像（非 root + healthcheck）
+examples/     SQLite / PostgreSQL / MongoDB / OpenAI / SiliconFlow / Embedding
+docs/         架构、MCP、评测、路线图
+```
+
+---
+
+## 路线图
+
+**已交付**
+
+- 写入幂等、真实事务、异步增强、Flush/Close、panic recover
+- 中英文启发式抽取 + LLM 严格 JSON 抽取
+- slot / status / superseded / 软删除
+- 稠密 + BM25 + 新近度 + 频率混合排序
+- 自动注入（含流式）与原始消息持久化
+- 嵌入模型/维度治理 + Reindex
+- Token 预算上下文 + 引用 + 原始证据双通道
+- 11 场景确定性评测 + CLI + CI
+- MCP stdio + Streamable HTTP + Bearer 鉴权
+- Docker 镜像 + 跨平台 release 构建
+
+**下一阶段**
+
+1. LongMemEval / 私有场景 + full-context / naive-RAG 三基线
+2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
+3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
+4. 多租户（org/app）+ RLS + 导出/删除合规
+5. 巩固/遗忘 job、本地嵌入/reranker
+
+详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+---
+
+## 已知边界
+
+- 召回目前是候选集 + Go 内打分，没有 ANN 索引；1,000 条事实约 10–11 ms，规模更大时请关注延迟并等待 ANN/FTS5。
+- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**，也没有 LLM-judge 三基线。
+- MCP HTTP 使用 Bearer token，不含 OAuth、按工具授权或多租户 RLS；多租户请先做网络隔离与独立进程。
+- MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
+- 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
+- 官方 MCP Go SDK 要求 **Go 1.25+**；纯 Go 构建仍为默认路径。
+
+---
+
+## 贡献与安全
+
+- 开发、测试与 PR 规范：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 漏洞报告与部署安全：[SECURITY.md](SECURITY.md)
+- 版本记录：[CHANGELOG.md](CHANGELOG.md)
+
+## License
+
+MIT. 见 [LICENSE](LICENSE)。

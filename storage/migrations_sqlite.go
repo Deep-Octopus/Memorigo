@@ -150,5 +150,19 @@ var sqliteMigrations = map[int][]string{
 			CONSTRAINT fk_memori_know_graph_subject FOREIGN KEY (subject_id) REFERENCES memori_subject (id) ON DELETE CASCADE
 		)`,
 	},
+	2: {
+		// Memory lifecycle: slots power fact supersession (e.g. a new home
+		// city replaces the old one), status records active/superseded/
+		// deleted facts, and embedding metadata makes provider changes
+		// detectable and re-indexable.
+		`ALTER TABLE memori_entity_fact ADD COLUMN slot TEXT DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN embedding_model TEXT DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN embedding_dim INTEGER DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN source_conversation_id INTEGER DEFAULT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_status
+			ON memori_entity_fact (entity_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_slot
+			ON memori_entity_fact (entity_id, slot)`,
+	},
 }
-

@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"errors"
+	"math"
 )
 
 var (
@@ -10,61 +11,83 @@ var (
 	ErrEmbeddingDimensionMismatch  = errors.New("embedding dimension mismatch")
 )
 
-// Embedder 定义统一的嵌入接口
+// Embedder is the provider-neutral embedding contract. Implementations must be
+// safe for concurrent use.
 type Embedder interface {
-	// EmbedText 将文本转换为向量嵌入
+	// EmbedText converts a single text into a vector.
 	EmbedText(ctx context.Context, text string) ([]float32, error)
 
-	// EmbedTexts 批量将多个文本转换为向量嵌入
+	// EmbedTexts converts a batch of texts into vectors, preserving input order.
 	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
 
-	// Dimension 返回嵌入向量的维度
+	// Dimension returns the vector dimension produced by this embedder.
 	Dimension() int
 
-	// Provider 返回提供商名称
+	// Provider returns the provider name, e.g. "openai" or "hash".
 	Provider() string
+
+	// Model returns the concrete model identifier, e.g. "text-embedding-3-small".
+	Model() string
 }
 
-// Config 嵌入配置
+// Config configures an embedder.
 type Config struct {
-	Provider  string // "openai", "siliconflow", "hash" (fallback)
+	Provider  string // "openai", "siliconflow", "hash" (offline fallback)
 	APIKey    string
 	BaseURL   string
 	Model     string
 	Dimension int
+	// CacheSize enables an in-process LRU embedding cache when > 0.
+	CacheSize int
 }
 
-// NewEmbedder 根据配置创建嵌入器
+// NewEmbedder builds an embedder from config and wraps it in an LRU cache when
+// CacheSize is positive.
 func NewEmbedder(config Config) Embedder {
+	var e Embedder
 	switch config.Provider {
 	case "openai":
-		return NewOpenAIEmbedder(config)
+		e = NewOpenAIEmbedder(config)
 	case "siliconflow":
-		return NewSiliconFlowEmbedder(config)
+		e = NewSiliconFlowEmbedder(config)
 	case "hash":
 		fallthrough
 	default:
-		// fallback to simple hash embedding for offline/demo use
-		return NewHashEmbedder()
+		dim := config.Dimension
+		if dim <= 0 {
+			dim = 256
+		}
+		e = NewHashEmbedderWithDim(dim)
 	}
+	if config.CacheSize > 0 {
+		return NewCachedEmbedder(e, config.CacheSize)
+	}
+	return e
 }
 
-// cosineSimilarity 计算两个向量的余弦相似度
+// CosineSimilarity computes cosine similarity in [-1, 1]. It returns 0 for
+// empty vectors or dimension mismatches.
 func CosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 0.0
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
 	}
-
-	var dotProduct, normA, normB float64
-	for i := 0; i < len(a); i++ {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
+	var dot, normA, normB float64
+	for i := range a {
+		fa := float64(a[i])
+		fb := float64(b[i])
+		dot += fa * fb
+		normA += fa * fa
+		normB += fb * fb
 	}
-
 	if normA == 0 || normB == 0 {
-		return 0.0
+		return 0
 	}
-
-	return dotProduct / (normA * normB)
+	sim := dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	if sim > 1 {
+		return 1
+	}
+	if sim < -1 {
+		return -1
+	}
+	return sim
 }

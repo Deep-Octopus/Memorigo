@@ -5,36 +5,41 @@ import (
 	"fmt"
 	"time"
 
-	"memorigo/memori"
+	"github.com/Deep-Octopus/Memorigo/memori"
 )
 
 func main() {
 	db, cleanup := openInMemorySQLite()
 	defer cleanup()
 
+	// Migrations run automatically when a connection is supplied.
 	m := memori.New(memori.WithStorageConn(db))
-	if err := m.Storage.Build(); err != nil {
+	defer m.Close()
+
+	if err := m.TryAttribution("user-123", "demo-bot"); err != nil {
 		panic(err)
 	}
 
-	// Attribution is required
-	m.Attribution("user-123", "demo-bot")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Simulate a conversation (you can also call OpenAICompatClient and then persist)
+	// Simulate a conversation.
 	w := memori.NewWriter(m)
 	payload := memori.ConversationPayload{
 		Messages: []memori.Message{
 			{Role: "user", Content: "My favorite color is blue"},
+			{Role: "user", Content: "I live in Shanghai"},
 		},
 		Response: &memori.Message{Role: "assistant", Content: "Noted."},
 	}
-
-	if err := w.Execute(context.Background(), payload); err != nil {
+	if err := w.Execute(ctx, payload); err != nil {
 		panic(err)
 	}
 
-	// Wait a bit for async offline augmentation to upsert facts
-	time.Sleep(50 * time.Millisecond)
+	// Wait for asynchronous extraction, embedding and reconciliation.
+	if err := m.Flush(ctx); err != nil {
+		panic(err)
+	}
 
 	facts, err := m.Recall("favorite color", 5)
 	if err != nil {
@@ -43,8 +48,7 @@ func main() {
 
 	fmt.Println("Recall results:")
 	for i, f := range facts {
-		fmt.Printf("%d) score=%.4f times=%d content=%q\n", i+1, f.Score, f.NumTimes, f.Content)
+		fmt.Printf("%d) score=%.4f similarity=%.4f times=%d slot=%q content=%q\n",
+			i+1, f.Score, f.Similarity, f.NumTimes, f.Slot, f.Content)
 	}
 }
-
-

@@ -32,5 +32,3 @@ func newSQLAdapter(conn any) (Adapter, error) {
 	}
 	return &SQLAdapter{DB: db, dialect: dialect}, nil
 }
-
-

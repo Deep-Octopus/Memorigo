@@ -14,5 +14,3 @@ func init() {
 	RegisterDriver("mongodb", newMongoDriver)
 
 }
-
-

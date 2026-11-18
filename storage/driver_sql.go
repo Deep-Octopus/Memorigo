@@ -1,14 +1,18 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 )
 
 type SQLDriver struct {
 	a       *SQLAdapter
 	dialect string
-	repos   *sqlRepos
+
+	once sync.Once
+	base Repos
 }
 
 func newSQLDriver(dialect string) driverFactory {
@@ -22,6 +26,36 @@ func newSQLDriver(dialect string) driverFactory {
 }
 
 func (d *SQLDriver) Dialect() string { return d.dialect }
+
+func (d *SQLDriver) db() *sql.DB { return d.a.DB }
+
+func (d *SQLDriver) baseRepos() Repos {
+	d.once.Do(func() {
+		d.base = newSQLRepos(d.a.DB, d.dialect)
+	})
+	return d.base
+}
+
+func (d *SQLDriver) Entity() EntityRepo             { return d.baseRepos().Entity() }
+func (d *SQLDriver) Process() ProcessRepo           { return d.baseRepos().Process() }
+func (d *SQLDriver) Session() SessionRepo           { return d.baseRepos().Session() }
+func (d *SQLDriver) Conversation() ConversationRepo { return d.baseRepos().Conversation() }
+func (d *SQLDriver) Message() MessageRepo           { return d.baseRepos().Message() }
+func (d *SQLDriver) EntityFact() EntityFactRepo     { return d.baseRepos().EntityFact() }
+
+// Transaction runs fn inside a database transaction. Repositories handed to fn
+// are bound to the transaction; any error rolls the whole unit back.
+func (d *SQLDriver) Transaction(ctx context.Context, fn func(Repos) error) error {
+	tx, err := d.a.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(newSQLRepos(tx, d.dialect)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 
 func (d *SQLDriver) Migrate() error {
 	if d.a == nil || d.a.DB == nil {
@@ -39,8 +73,7 @@ func (d *SQLDriver) Migrate() error {
 	}
 
 	currentVersion := d.getSchemaVersion()
-	maxVersion := 1 // Currently only version 1
-
+	maxVersion := maxSQLMigrationVersion(migrations)
 	if currentVersion >= maxVersion {
 		return nil
 	}
@@ -56,31 +89,19 @@ func (d *SQLDriver) Migrate() error {
 		if !ok {
 			continue
 		}
-
 		for _, op := range ops {
 			if _, err := tx.Exec(op); err != nil {
 				return fmt.Errorf("migration %d failed: %w", v, err)
 			}
 		}
 
-		// Update schema version
 		var updateSQL string
-		if d.dialect == "postgres" {
-			if currentVersion == 0 {
-				updateSQL = "INSERT INTO memori_schema_version (num) VALUES ($1)"
-			} else {
-				updateSQL = "UPDATE memori_schema_version SET num = $1"
-			}
-			_, err = tx.Exec(updateSQL, v)
+		if currentVersion == 0 {
+			updateSQL = "INSERT INTO memori_schema_version (num) VALUES (" + sqlPlaceholder(d.dialect, 1) + ")"
 		} else {
-			if currentVersion == 0 {
-				updateSQL = "INSERT INTO memori_schema_version (num) VALUES (?)"
-			} else {
-				updateSQL = "UPDATE memori_schema_version SET num = ?"
-			}
-			_, err = tx.Exec(updateSQL, v)
+			updateSQL = "UPDATE memori_schema_version SET num = " + sqlPlaceholder(d.dialect, 1)
 		}
-		if err != nil {
+		if _, err := tx.Exec(updateSQL, v); err != nil {
 			return err
 		}
 		currentVersion = v
@@ -101,7 +122,12 @@ func (d *SQLDriver) getSchemaVersion() int {
 	return int(version.Int64)
 }
 
-// Helpers for future repos:
-func (d *SQLDriver) db() *sql.DB { return d.a.DB }
-
-
+func maxSQLMigrationVersion(migrations map[int][]string) int {
+	max := 0
+	for v := range migrations {
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}

@@ -2,39 +2,46 @@ package memori
 
 import (
 	"os"
+	"strings"
 )
 
 type OpenAIProvider struct {
 	m *Memori
 }
 
-// Register wires an OpenAI-compatible client into Memori.
-// This returns Memori to match the Python "mem.openai.register(client)" chaining style.
+// Register wires an OpenAI-compatible client into Memori and returns Memori for
+// chaining.
 func (p *OpenAIProvider) Register(client *OpenAICompatClient) *Memori {
-	// Default client if nil.
 	if client == nil {
-		client = NewOpenAICompatClient(OpenAICompatOptions{})
+		client = NewOpenAIClient()
 	}
 	p.m.Config.mu.Lock()
 	p.m.Config.LLM.Provider = "openai_compatible"
 	p.m.Config.LLM.Version = "v1"
 	p.m.Config.mu.Unlock()
 
-	p.m.OpenAI = &OpenAIProvider{m: p.m}
-	p.m.openAIClient = client
+	p.m.setOpenAIClient(client)
 	return p.m
 }
 
-// Convenience constructors
+// Client returns the currently registered raw client, if any.
+func (p *OpenAIProvider) Client() *OpenAICompatClient {
+	return p.m.getOpenAIClient()
+}
+
 func NewOpenAIClient() *OpenAICompatClient {
+	base := os.Getenv("OPENAI_BASE_URL")
+	if base == "" {
+		base = "https://api.openai.com"
+	}
 	return NewOpenAICompatClient(OpenAICompatOptions{
-		BaseURL: "https://api.openai.com",
+		BaseURL: base,
 		APIKey:  os.Getenv("OPENAI_API_KEY"),
 	})
 }
 
 func NewSiliconFlowClient() *OpenAICompatClient {
-	base := os.Getenv("SILICONFLOW_BASE_URL")
+	base := strings.TrimSpace(os.Getenv("SILICONFLOW_BASE_URL"))
 	if base == "" {
 		base = "https://api.siliconflow.cn"
 	}
@@ -43,5 +50,3 @@ func NewSiliconFlowClient() *OpenAICompatClient {
 		APIKey:  os.Getenv("SILICONFLOW_API_KEY"),
 	})
 }
-
-

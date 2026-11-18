@@ -9,7 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"memorigo/memori"
+	"github.com/Deep-Octopus/Memorigo/memori"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 		dbName = "memori"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
@@ -36,11 +36,14 @@ func main() {
 	db := client.Database(dbName)
 
 	m := memori.New(memori.WithStorageConn(db))
-	if err := m.Storage.Build(); err != nil {
+	defer m.Close()
+	if err := m.Err(); err != nil {
 		panic(err)
 	}
 
-	m.Attribution("user-123", "demo-bot")
+	if err := m.TryAttribution("user-123", "demo-bot"); err != nil {
+		panic(err)
+	}
 
 	w := memori.NewWriter(m)
 	payload := memori.ConversationPayload{
@@ -49,12 +52,12 @@ func main() {
 		},
 		Response: &memori.Message{Role: "assistant", Content: "Nice."},
 	}
-
-	if err := w.Execute(context.Background(), payload); err != nil {
+	if err := w.Execute(ctx, payload); err != nil {
 		panic(err)
 	}
-
-	time.Sleep(150 * time.Millisecond)
+	if err := m.Flush(ctx); err != nil {
+		panic(err)
+	}
 
 	facts, err := m.Recall("favorite food", 5)
 	if err != nil {
@@ -63,8 +66,6 @@ func main() {
 
 	fmt.Println("Recall results:")
 	for i, f := range facts {
-		fmt.Printf("%d) score=%.4f times=%d content=%q\n", i+1, f.Score, f.NumTimes, f.Content)
+		fmt.Printf("%d) score=%.4f times=%d slot=%q content=%q\n", i+1, f.Score, f.NumTimes, f.Slot, f.Content)
 	}
 }
-
-

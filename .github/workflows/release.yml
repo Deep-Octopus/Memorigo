@@ -1,0 +1,99 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: test
+        run: go test -race ./...
+
+      - name: eval
+        run: go run ./cmd/memorigo-eval
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -eu
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-s -w \
+            -X github.com/Deep-Octopus/Memorigo/internal/version.Version=${VERSION} \
+            -X github.com/Deep-Octopus/Memorigo/internal/version.Commit=${COMMIT} \
+            -X github.com/Deep-Octopus/Memorigo/internal/version.Date=${BUILD_DATE}"
+          OUT="dist/${GOOS}-${GOARCH}"
+          mkdir -p "$OUT"
+          go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/memorigo-mcp" ./cmd/memorigo-mcp
+          go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/memorigo-eval" ./cmd/memorigo-eval
+          if [ "$GOOS" = "windows" ]; then
+            mv "$OUT/memorigo-mcp" "$OUT/memorigo-mcp.exe"
+            mv "$OUT/memorigo-eval" "$OUT/memorigo-eval.exe"
+          fi
+          cp README.md LICENSE CHANGELOG.md "$OUT/"
+          tar -C "$OUT" -czf "dist/memorigo_${VERSION}_${GOOS}_${GOARCH}.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memorigo-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true

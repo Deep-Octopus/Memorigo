@@ -53,5 +53,3 @@ func RegistryDriver(adapter Adapter) (Driver, error) {
 	}
 	return f(adapter)
 }
-
-

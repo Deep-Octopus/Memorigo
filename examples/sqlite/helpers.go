@@ -15,5 +15,3 @@ func openInMemorySQLite() (*sql.DB, func()) {
 	cleanup := func() { _ = db.Close() }
 	return db, cleanup
 }
-
-

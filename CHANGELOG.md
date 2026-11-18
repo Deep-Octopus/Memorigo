@@ -1,0 +1,81 @@
+# Changelog
+
+All notable changes to Memorigo are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
+[Semantic Versioning](https://semver.org/).
+
+## [1.0.0] - 2026-11-18
+
+The first production-oriented release. Memorigo is now an end-to-end memory
+layer rather than a collection of storage helpers.
+
+### Added
+
+- **Token-budgeted context assembly** (`BuildContext`): facts and raw
+  conversation evidence share one budget; stable `fact:<id>` / `msg:<id>`
+  citations; cross-session evidence for the same entity.
+- **Automatic injection uses the context engine**, so injected tokens are
+  bounded by `MEMORI_CONTEXT_BUDGET` (default 800).
+- **Deterministic evaluation harness** (`eval/`, `memorigo-eval`): 11
+  scenarios covering recall, supersession, relocation, session continuity,
+  forgetting, noise, Chinese recall, entity isolation, token budgets, raw
+  evidence and cross-session evidence.
+- **MCP server** (`mcpserver/`, `memorigo-mcp`) with six tools:
+  `memory_search`, `memory_context`, `memory_remember`, `memory_forget`,
+  `memory_profile`, `memory_stats`.
+- **MCP transports**: stdio for local clients and stateless Streamable HTTP
+  with Bearer authentication and `/healthz`.
+- **Release automation**: cross-platform archives, checksums and GitHub
+  releases on `v*` tags; a multi-stage Docker image for the HTTP server.
+- **Benchmarks** for recall and context assembly over 1,000 facts.
+- `-version` output and link-time build metadata.
+
+### Changed
+
+- Module path is `github.com/Deep-Octopus/Memorigo`.
+- Go 1.25+ is required by the official MCP Go SDK; the default build remains
+  pure Go (`CGO_ENABLED=0`).
+- Recall BM25 now tracks only query-term frequencies and uses a bounded fact-token cache, reducing allocations on repeated queries.
+- Writes are idempotent across complete-history replays; response messages are
+  not duplicated in conversation history.
+- Empty queries skip embedding work and return recent facts.
+
+### Fixed
+
+- Streaming OpenAI-compatible responses persist exactly once and no longer
+  truncate when the upstream error channel closes early.
+- Attribution errors are surfaced through `Err()` / `TryAttribution` instead of
+  panicking.
+- Semantic merge only applies within the same slot.
+- Embedding model/dimension changes are handled through `Reindex` without
+  mixing vector spaces.
+- Replaying a conversation no longer enqueues a no-op augmentation job or
+  inflates `num_times`; automatic extraction can no longer resurrect a
+  superseded or forgotten fact. Explicit `Remember` still reactivates.
+- Only the unseen suffix of a growing chat history is sent to extraction, so a
+  fact stated once is not re-counted on every turn.
+- Embedding dimension detection is race-free under concurrent `EmbedText` /
+  `EmbedTexts` calls.
+- Dedup keys preserve one-character values, so facts such as
+  "favorite number is 7" and "favorite number is 8" remain distinct.
+- Fact reconciliation is serialized per entity, preventing interleaved
+  exclusive-slot writes from leaving zero or multiple active values.
+- Reindex converges when an endpoint returns a different dimension than the
+  embedder initially reported.
+- Writer transactions no longer populate the process-wide id cache before
+  commit, so a rolled-back transaction cannot poison later writes; SQL
+  get-or-create uses `ON CONFLICT DO NOTHING` to keep PostgreSQL transactions
+  usable after a concurrent unique race.
+- Lazy OpenAI-compatible client access is synchronized.
+- Streamable HTTP accepts a TLS reverse proxy's public Host header while
+  retaining cross-origin browser protection.
+
+### Security
+
+- MCP HTTP is token-protected by default; anonymous mode must be explicit.
+- MCP tool inputs are bounded (search 100 facts, context 8,000 tokens / 200
+  facts / 50 raw messages, profile 500 facts) to keep responses predictable.
+- MCP responses mark memory text as untrusted data, not instructions.
+- Memory blocks are always framed as data. The LLM extraction prompt tells the
+  model not to store secrets, but this is a prompt-level guard, not a
+  redaction layer; redact regulated data upstream.

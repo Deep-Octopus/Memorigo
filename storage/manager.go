@@ -47,5 +47,3 @@ func (m *Manager) Build() error {
 }
 
 var ErrNoAdapter = errors.New("no adapter registered for connection type")
-
-

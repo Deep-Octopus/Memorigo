@@ -150,5 +150,15 @@ var postgresMigrations = map[int][]string{
 			CONSTRAINT fk_memori_know_graph_subject FOREIGN KEY (subject_id) REFERENCES memori_subject (id) ON DELETE CASCADE
 		)`,
 	},
+	2: {
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS slot VARCHAR(255) DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(255) DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS embedding_dim INTEGER DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS source_conversation_id BIGINT DEFAULT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_status
+			ON memori_entity_fact (entity_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_slot
+			ON memori_entity_fact (entity_id, slot)`,
+	},
 }
-

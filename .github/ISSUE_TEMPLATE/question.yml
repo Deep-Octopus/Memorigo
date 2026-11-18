@@ -1,0 +1,22 @@
+name: Configuration
+description: Ask for help with a deployment or configuration
+title: "[question] "
+labels: ["question"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Setup
+      description: Storage backend, deployment (local/Docker), MCP transport and relevant env vars (never secrets).
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried

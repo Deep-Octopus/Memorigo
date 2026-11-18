@@ -144,11 +144,31 @@ var mongoMigrations = map[int][]mongoMigrationOp{
 			Options: options.Index().SetUnique(true),
 		}},
 	},
+	2: {
+		{"memori_entity_fact", mongo.IndexModel{
+			Keys:    bson.D{{Key: "entity_id", Value: 1}, {Key: "status", Value: 1}},
+			Options: options.Index().SetName("idx_memori_entity_fact_entity_status"),
+		}},
+		{"memori_entity_fact", mongo.IndexModel{
+			Keys:    bson.D{{Key: "entity_id", Value: 1}, {Key: "slot", Value: 1}},
+			Options: options.Index().SetName("idx_memori_entity_fact_entity_slot"),
+		}},
+	},
+}
+
+func maxMongoMigrationVersion(migrations map[int][]mongoMigrationOp) int {
+	max := 0
+	for v := range migrations {
+		if v > max {
+			max = v
+		}
+	}
+	return max
 }
 
 func (d *MongoDriver) migrateMongo(ctx context.Context) error {
 	currentVersion := d.getSchemaVersion(ctx)
-	maxVersion := 1 // Currently only version 1
+	maxVersion := maxMongoMigrationVersion(mongoMigrations)
 
 	if currentVersion >= maxVersion {
 		return nil
@@ -202,4 +222,3 @@ func (d *MongoDriver) getSchemaVersion(ctx context.Context) int {
 	}
 	return doc.Num
 }
-

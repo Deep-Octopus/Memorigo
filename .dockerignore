@@ -1,0 +1,13 @@
+.git
+.github
+bin
+coverage.out
+coverage.html
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+docs
+examples
+memorigo.png
+README.md
