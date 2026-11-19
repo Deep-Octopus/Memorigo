@@ -168,6 +168,7 @@ func main() {
 
 ```bash
 go run ./examples/sqlite
+go run ./examples/adapter      # 不依赖其他框架，注入的 system 消息不会写回记忆
 go run ./examples/postgres     # 需要 POSTGRES_DSN
 go run ./examples/mongodb      # 需要 MONGODB_URI
 ```
@@ -527,9 +528,10 @@ mcpserver/    MCP 工具面 + stdio/HTTP 适配
 eval/         确定性评测场景、报告、JSON 输出
 cmd/          memorigo-eval、memorigo-mcp、memorigo-api
 api/          JSON HTTP API（Bearer，/v1/recall 等）
+adapter/      框架无关的上下文注入（不依赖 Eino / Genkit）
 internal/     版本与构建元数据
 Dockerfile    多阶段 MCP 镜像（非 root + healthcheck）
-examples/     SQLite / PostgreSQL / MongoDB / OpenAI / SiliconFlow / Embedding
+examples/     SQLite / PostgreSQL / MongoDB / OpenAI / SiliconFlow / Embedding / adapter
 docs/         架构、MCP、评测、路线图
 ```
 
@@ -549,13 +551,14 @@ docs/         架构、MCP、评测、路线图
 - Token 预算上下文 + 引用 + 原始证据 + 常驻画像三通道
 - 16 场景确定性评测 + full-context / naive RAG want 命中率 + CLI + CI
 - MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
+- 框架无关适配：`adapter.Apply` 只改发往模型的消息副本
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
-1. 薄框架适配示例（不把 Eino / Genkit 引进依赖）
-2. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
-3. 数据库 RLS、OAuth、OTel。稠密 ANN 仍不默认引入 cgo
+1. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
+2. 数据库 RLS、OAuth、OTel。稠密 ANN 仍不默认引入 cgo
+3. 程序性记忆与自适应检索仍是路线图后段，需要单独的评测证据
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

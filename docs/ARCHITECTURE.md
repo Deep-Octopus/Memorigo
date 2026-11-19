@@ -78,6 +78,7 @@ flowchart TB
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |
 | 嵌入 | `embed/` | hash / OpenAI / 硅基流动 / Ollama、可选 HTTP rerank、LRU、HTTP 重试 |
 | HTTP API | `api/`、`cmd/memorigo-api` | Bearer JSON。`/healthz` 不鉴权。默认 `127.0.0.1:8788` |
+| 框架适配 | `adapter/`、`examples/adapter` | 调用 `BuildContext` 后插入一条 system 消息。不写回记忆，不依赖 Eino / Genkit |
 | 文本 | `textutil/` | 归一化、分词、CJK bigram、句子切分、token 估算 |
 | MCP | `mcpserver/` | 六个记忆工具、静态 scope、进程内配额、JSONL 审计、stdio 与 stateless Streamable HTTP |
 | 评测 | `eval/` | 确定性场景、full-context / naive RAG want 命中率、报告、JSON 输出 |

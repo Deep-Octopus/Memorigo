@@ -264,7 +264,7 @@ asserted_by       TEXT NOT NULL DEFAULT 'user'  -- user / assistant / inferred
 | P1-1 | **上下文装配 `BuildContext(query, budget)`**（✅ 已交付） | 4 | 中 | 输出带引用、token 预算、分层片段；注入 token 可控 |
 | P1-2 | **三通道上下文**：Profile + 事实 + 原始消息，MMR / 覆盖率 / 位置重排（✅ 基础版已交付） | 4 | 中 | memory tax 可量化；证据覆盖率提升 |
 | P1-3 | **MCP server**（✅ stdio + HTTP + Bearer 已交付） | 4 | 中 | Claude Code / Cursor 可读写；工具有集成测试 |
-| P1-4 | **框架适配**：Eino / Genkit 薄适配 | 3 | 低 | 示例可运行；不绑定框架抽象 |
+| P1-4 | **框架适配**（✅ `adapter.Apply` + `examples/adapter`。不导入 Eino / Genkit，不把注入后的消息写回记忆） | 3 | 低 | 示例可运行；不绑定框架抽象 |
 | P1-5 | **巩固/遗忘**（✅ `Maintain`/`Restore`：TTL + 提及次数保护，可 dry-run、可恢复；无 LLM 摘要、无自动调度） | 3 | 中 | 过期事实离开召回，`Restore` 后回来；高频事实保留 |
 | P1-6 | **本地嵌入 / reranker**（✅ Ollama HTTP 嵌入，模型名由 `MEMORI_EMBEDDING_MODEL` 锁定；HTTP rerank 默认关闭。无 API key 时仍走 hash） | 3 | 低到中 | 无 API key 可运行；模型版本由调用方固定 |
 | P1-7 | **隐私与合规**（✅ 导出 v1 + 硬删除 + 可选 PII 正则。未做 crypto-shredding，未做 RLS） | 4 | 中 | 删除后本主体行数为 0，其他主体仍在；导出 JSON 版本稳定 |
