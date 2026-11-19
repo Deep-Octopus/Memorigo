@@ -8,6 +8,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -137,17 +139,17 @@ func (s *state) resolveEntity(id string) string {
 
 // guard checks the static allow-list and read-only mode. It does not consume
 // quota. A denied call is still audited.
-func (s *state) guard(tool, entity string) (string, time.Time, error) {
+func (s *state) guard(req *mcp.CallToolRequest, tool, entity string) (string, time.Time, error) {
 	started := s.now()
 	entity = s.resolveEntity(entity)
-	if err := s.permit(tool); err != nil {
+	if err := s.permit(req, tool); err != nil {
 		s.record(tool, entity, outcomeOf(err), started)
 		return entity, started, err
 	}
 	return entity, started, nil
 }
 
-func (s *state) permit(tool string) error {
+func (s *state) permit(req *mcp.CallToolRequest, tool string) error {
 	if s.scopeErr != nil {
 		return s.scopeErr
 	}
@@ -158,6 +160,11 @@ func (s *state) permit(tool string) error {
 	}
 	if s.opts.ReadOnly && isWriteTool(tool) {
 		return errReadOnly
+	}
+	if scopes, ok := oauthToolScopes(req); ok {
+		if _, allowed := scopes[tool]; !allowed {
+			return errForbidden
+		}
 	}
 	return nil
 }

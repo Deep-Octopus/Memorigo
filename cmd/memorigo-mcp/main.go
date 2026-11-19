@@ -45,6 +45,10 @@ func run() error {
 	httpMode := flag.Bool("http", envBool("MEMORI_MCP_HTTP", false), "serve stateless Streamable HTTP instead of stdio")
 	addr := flag.String("addr", env("MEMORI_MCP_ADDR", "127.0.0.1:8787"), "HTTP listen address")
 	token := flag.String("token", env("MEMORI_MCP_TOKEN", ""), "HTTP Bearer token (or MEMORI_MCP_TOKEN)")
+	oauthIssuer := flag.String("oauth-issuer", env("MEMORI_MCP_OAUTH_ISSUER", ""), "OAuth issuer URL checked as JWT iss. Empty disables JWT tokens")
+	oauthAudience := flag.String("oauth-audience", env("MEMORI_MCP_OAUTH_AUDIENCE", ""), "OAuth audience URL checked as JWT aud. Also the protected-resource identifier")
+	oauthHMAC := flag.String("oauth-hmac-secret", env("MEMORI_MCP_OAUTH_HMAC_SECRET", ""), "HS256 secret, at least 16 bytes. Mutually exclusive with -oauth-rsa-key")
+	oauthRSAPath := flag.String("oauth-rsa-key", env("MEMORI_MCP_OAUTH_RSA_KEY", ""), "PEM file containing an RS256 public key")
 	allowAnonymous := flag.Bool("allow-anonymous", envBool("MEMORI_MCP_ALLOW_ANONYMOUS", false), "allow unauthenticated HTTP (trusted loopback only)")
 	path := flag.String("path", env("MEMORI_MCP_PATH", "/mcp"), "HTTP MCP endpoint path")
 	tlsCert := flag.String("tls-cert", env("MEMORI_MCP_TLS_CERT", ""), "TLS certificate file for HTTP mode")
@@ -65,6 +69,19 @@ func run() error {
 	}
 	if *quota < 0 || *quota > mcpserver.MaxQuotaPerMinute {
 		return fmt.Errorf("quota must be between 0 and %d", mcpserver.MaxQuotaPerMinute)
+	}
+	rsaPEM, err := readOptionalFile(*oauthRSAPath)
+	if err != nil {
+		return err
+	}
+	oauthCfg := mcpserver.OAuthConfig{
+		Issuer:          *oauthIssuer,
+		Audience:        *oauthAudience,
+		HMACSecret:      *oauthHMAC,
+		RSAPublicKeyPEM: rsaPEM,
+	}
+	if !*httpMode && oauthConfigured(oauthCfg) {
+		return errors.New("OAuth flags apply only to -http")
 	}
 	audit, auditCloser, err := openAudit(*auditPath)
 	if err != nil {
@@ -109,6 +126,7 @@ func run() error {
 			allowAnonymous: *allowAnonymous,
 			tlsCert:        *tlsCert,
 			tlsKey:         *tlsKey,
+			oauth:          oauthCfg,
 		})
 	}
 
@@ -130,6 +148,7 @@ type httpConfig struct {
 	allowAnonymous bool
 	tlsCert        string
 	tlsKey         string
+	oauth          mcpserver.OAuthConfig
 }
 
 func serveHTTP(ctx context.Context, server *mcp.Server, cfg httpConfig) error {
@@ -138,6 +157,7 @@ func serveHTTP(ctx context.Context, server *mcp.Server, cfg httpConfig) error {
 		AllowAnonymous: cfg.allowAnonymous,
 		Path:           cfg.path,
 		Version:        version.Version,
+		OAuth:          cfg.oauth,
 	})
 	if err != nil {
 		return err
@@ -159,8 +179,8 @@ func serveHTTP(ctx context.Context, server *mcp.Server, cfg httpConfig) error {
 	if cfg.token == "" {
 		log.Printf("warning: HTTP transport is unauthenticated (allow-anonymous)")
 	}
-	log.Printf("memorigo MCP server ready transport=http addr=%s path=%s tls=%v version=%s",
-		cfg.addr, cfg.path, useTLS, version.Version)
+	log.Printf("memorigo MCP server ready transport=http addr=%s path=%s tls=%v oauth=%v version=%s",
+		cfg.addr, cfg.path, useTLS, oauthConfigured(cfg.oauth), version.Version)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -187,6 +207,22 @@ func serveHTTP(ctx context.Context, server *mcp.Server, cfg httpConfig) error {
 		}
 	}
 	return nil
+}
+
+func oauthConfigured(cfg mcpserver.OAuthConfig) bool {
+	return strings.TrimSpace(cfg.Issuer) != "" || strings.TrimSpace(cfg.Audience) != "" ||
+		cfg.HMACSecret != "" || strings.TrimSpace(cfg.RSAPublicKeyPEM) != ""
+}
+
+func readOptionalFile(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 func isLoopbackAddr(addr string) bool {

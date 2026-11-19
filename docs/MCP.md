@@ -132,7 +132,11 @@ HTTP flags and environment variables:
 |---|---|---|---|
 | `-http` | `MEMORI_MCP_HTTP` | `false` | enable HTTP transport |
 | `-addr` | `MEMORI_MCP_ADDR` | `127.0.0.1:8787` | listen address |
-| `-token` | `MEMORI_MCP_TOKEN` | — | required unless anonymous |
+| `-token` | `MEMORI_MCP_TOKEN` | — | static Bearer. Still accepted when OAuth is configured |
+| `-oauth-issuer` | `MEMORI_MCP_OAUTH_ISSUER` | empty (JWT off) | absolute issuer URL, matched to JWT `iss` |
+| `-oauth-audience` | `MEMORI_MCP_OAUTH_AUDIENCE` | empty | absolute resource URL, matched to JWT `aud` |
+| `-oauth-hmac-secret` | `MEMORI_MCP_OAUTH_HMAC_SECRET` | empty | HS256 secret, at least 16 bytes |
+| `-oauth-rsa-key` | `MEMORI_MCP_OAUTH_RSA_KEY` | empty | PEM file for an RS256 public key, at least 2048 bits. Not combined with the HMAC secret |
 | `-allow-anonymous` | `MEMORI_MCP_ALLOW_ANONYMOUS` | `false` | trusted loopback only |
 | `-path` | `MEMORI_MCP_PATH` | `/mcp` | MCP endpoint |
 | `-tls-cert` / `-tls-key` | `MEMORI_MCP_TLS_CERT` / `..._KEY` | — | direct TLS |
@@ -141,7 +145,8 @@ HTTP flags and environment variables:
 | `-audit` | `MEMORI_MCP_AUDIT_LOG` | empty (off) | JSONL path. No query text and no memory text |
 
 If both a token and `-allow-anonymous` are set, the token is still required:
-anonymous mode only permits an empty token.
+anonymous mode only permits an empty token. A configured OAuth verifier also
+satisfies the credential requirement when the static token is empty.
 
 ### TLS and proxies
 
@@ -155,10 +160,21 @@ There are three supported deployment shapes:
 
 The server logs a warning when HTTP is not using TLS. A reverse proxy may
 preserve a public `Host` header; cross-site browser requests are rejected by
-cross-origin protection, while non-browser MCP clients still work. The server
-does not implement OAuth. Tool authorization is a static allow-list chosen at
-startup, the quota counts calls in this process only, and the audit log is a
-local JSONL file. Use network isolation for multi-user deployments.
+cross-origin protection, while non-browser MCP clients still work. Tool
+authorization is a static allow-list chosen at startup. The quota counts calls
+in this process only, and the audit log is a local JSONL file.
+
+OAuth is an optional second credential on the same Bearer header. Set the
+issuer, audience, and either an HMAC secret or an RSA public key. A JWT must
+use HS256 or RS256 and match `iss`, `aud` and `exp`. `scope` (or `scp`) accepts
+`read`, `write`, `all` and the tool names. It cannot call a tool omitted from
+`-scopes`, and it cannot bypass `-readonly`. The static token ignores that
+scope claim and keeps the process allow-list. Rejected tokens do not consume
+quota and do not write an audit line. Metadata is served at
+`/.well-known/oauth-protected-resource` and, when the audience has a path, at
+the path-inserted URL advertised in `WWW-Authenticate`. The server does not
+issue tokens, and stdio does not validate JWTs. Use network isolation for
+multi-user deployments.
 
 ---
 

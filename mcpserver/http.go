@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,6 +23,9 @@ type HTTPOptions struct {
 	Path string
 	// Version is reported by /healthz.
 	Version string
+	// OAuth adds JWT bearer tokens on top of Token. The zero value keeps the
+	// static Bearer check. A configured static token still authenticates.
+	OAuth OAuthConfig
 }
 
 // NewHTTPHandler returns a stateless Streamable HTTP handler for the MCP
@@ -40,8 +44,19 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 	if opts.Path == "/" || opts.Path == "/healthz" || strings.ContainsAny(opts.Path, " \t\r\n{}") {
 		return nil, errors.New("mcpserver: HTTP path is reserved or invalid")
 	}
-	if opts.Token == "" && !opts.AllowAnonymous {
+	oauth, err := prepareOAuth(opts.OAuth)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Token == "" && !opts.AllowAnonymous && oauth == nil {
 		return nil, errors.New("mcpserver: HTTP transport requires a token or AllowAnonymous")
+	}
+	if oauth != nil {
+		for _, path := range oauth.paths {
+			if path == opts.Path || path == "/healthz" {
+				return nil, errors.New("mcpserver: HTTP path conflicts with OAuth metadata")
+			}
+		}
 	}
 	if opts.Version == "" {
 		opts.Version = "dev"
@@ -64,9 +79,15 @@ func NewHTTPHandler(server *mcp.Server, opts HTTPOptions) (http.Handler, error) 
 	mcpHandler := http.NewCrossOriginProtection().Handler(rawHandler)
 
 	mux := http.NewServeMux()
-	if opts.Token != "" {
+	switch {
+	case oauth != nil:
+		for _, path := range oauth.paths {
+			mux.Handle(path, auth.ProtectedResourceMetadataHandler(oauth.metadata))
+		}
+		mux.Handle(opts.Path, oauth.middleware(opts.Token, mcpHandler))
+	case opts.Token != "":
 		mux.Handle(opts.Path, bearerAuth(opts.Token, mcpHandler))
-	} else {
+	default:
 		mux.Handle(opts.Path, mcpHandler)
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

@@ -24,7 +24,8 @@ type Options struct {
 	ReadOnly      bool
 	ServerVersion string
 	// Scopes is a static allow-list of canonical tool names or aliases
-	// (read, write, all). Empty allows every tool. This is not OAuth.
+	// (read, write, all). Empty allows every tool. An OAuth token cannot
+	// widen this list. Stdio and a static Bearer token do not narrow it.
 	Scopes []string
 	// QuotaPerMinute limits tool calls in this process. Zero is unlimited.
 	// Values above MaxQuotaPerMinute are clamped.
@@ -233,10 +234,10 @@ type statsView struct {
 	StorageDialect    string `json:"storage_dialect"`
 }
 
-func (s *state) search(ctx context.Context, _ *mcp.CallToolRequest, args searchArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) search(ctx context.Context, req *mcp.CallToolRequest, args searchArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolSearch, args.EntityID)
+	entity, started, err := s.guard(req, toolSearch, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -267,10 +268,10 @@ func (s *state) search(ctx context.Context, _ *mcp.CallToolRequest, args searchA
 	return jsonResult(searchResult{Facts: views, Count: len(views)})
 }
 
-func (s *state) context(ctx context.Context, _ *mcp.CallToolRequest, args contextArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) context(ctx context.Context, req *mcp.CallToolRequest, args contextArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolContext, args.EntityID)
+	entity, started, err := s.guard(req, toolContext, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -304,10 +305,10 @@ func (s *state) context(ctx context.Context, _ *mcp.CallToolRequest, args contex
 	return jsonResult(pkg)
 }
 
-func (s *state) remember(ctx context.Context, _ *mcp.CallToolRequest, args rememberArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) remember(ctx context.Context, req *mcp.CallToolRequest, args rememberArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolRemember, args.EntityID)
+	entity, started, err := s.guard(req, toolRemember, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -327,10 +328,10 @@ func (s *state) remember(ctx context.Context, _ *mcp.CallToolRequest, args remem
 	return jsonResult(rememberResult{ID: id})
 }
 
-func (s *state) rule(ctx context.Context, _ *mcp.CallToolRequest, args ruleArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) rule(ctx context.Context, req *mcp.CallToolRequest, args ruleArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolRule, args.EntityID)
+	entity, started, err := s.guard(req, toolRule, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -350,10 +351,10 @@ func (s *state) rule(ctx context.Context, _ *mcp.CallToolRequest, args ruleArgs)
 	return jsonResult(rememberResult{ID: id})
 }
 
-func (s *state) forget(ctx context.Context, _ *mcp.CallToolRequest, args forgetArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) forget(ctx context.Context, req *mcp.CallToolRequest, args forgetArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolForget, args.EntityID)
+	entity, started, err := s.guard(req, toolForget, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -376,10 +377,10 @@ func (s *state) forget(ctx context.Context, _ *mcp.CallToolRequest, args forgetA
 	return jsonResult(forgetResult{Forgotten: true, ID: args.ID})
 }
 
-func (s *state) profile(ctx context.Context, _ *mcp.CallToolRequest, args profileArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) profile(ctx context.Context, req *mcp.CallToolRequest, args profileArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolProfile, args.EntityID)
+	entity, started, err := s.guard(req, toolProfile, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -427,10 +428,10 @@ func (s *state) profile(ctx context.Context, _ *mcp.CallToolRequest, args profil
 	return jsonResult(out)
 }
 
-func (s *state) stats(ctx context.Context, _ *mcp.CallToolRequest, args statsArgs) (*mcp.CallToolResult, any, error) {
+func (s *state) stats(ctx context.Context, req *mcp.CallToolRequest, args statsArgs) (*mcp.CallToolResult, any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entity, started, err := s.guard(toolStats, args.EntityID)
+	entity, started, err := s.guard(req, toolStats, args.EntityID)
 	if err != nil {
 		return nil, nil, err
 	}
