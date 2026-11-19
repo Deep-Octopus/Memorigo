@@ -140,7 +140,7 @@ eval/
   judge/        # LLM-judge + 人工抽检
 ```
 
-验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 15/15 只代表确定性回归通过，**不可与 LoCoMo/LongMemEval 分数横向比较**。
+验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 16/16 和内置语料上的 full-context / naive RAG 命中率只代表确定性回归，**不可与 LoCoMo/LongMemEval 分数横向比较**。外部数据集目录仍不提交数据，LLM-judge 仍未做。
 
 ---
 
@@ -161,14 +161,14 @@ eval/
 | SQLite / PostgreSQL / MongoDB Repos | ✅ |
 | 归因隔离、错误不 panic、Stats | ✅ |
 | 单元 + SQLite 集成 + httptest 协议测试 + race | ✅ |
-| **确定性评测 harness + CLI（15 场景）** | ✅ |
+| **确定性评测 harness + CLI（16 场景，含全文/朴素 RAG 对照）** | ✅ |
 | **`BuildContext`：token 预算 + 引用 + 原始证据双通道** | ✅ |
 | **常驻 Profile + MMR 多样性 + 覆盖率弃权 + 位置重排** | ✅ |
 | **MCP server：search/context/remember/forget/profile/stats + stdio/HTTP** | ✅ |
 
 ### 仍缺
 
-1. **外部评测与三基线**：当前只有确定性回归，尚未接 LoCoMo / LongMemEval，也没有 full-context / naive-RAG / LLM-judge 对比。
+1. **外部评测**：✅ 内置场景上的 full-context（最近窗口）与 naive RAG（hash 余弦 top-k）已对照 want 字符串出命中率。仍没有 LoCoMo / LongMemEval，也没有 LLM-judge。
 2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。稠密检索仍是有界扫描；pgvector HNSW 仍未接（`modernc` 不能加载 `vec0`，默认构建保持纯 Go）。
 3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
@@ -184,11 +184,11 @@ eval/
 
 ### P0：正确性与可证明性（接下来 4–6 周）
 
-> 状态（2026-11-18）：P0-1 的确定性回归部分已完成（`eval/` + 15 场景 + CI）；外部数据集与三基线仍未做。P0-4 的 slot/status 覆盖已具备，但 `valid_from/valid_to` 尚未加。
+> 状态（2026-11-19）：P0-1 的确定性回归与内置语料上的 full-context / naive RAG 对照已完成（`eval/` + 16 场景）。外部数据集与 LLM-judge 仍未做。P0-4 的时态字段已交付。
 
 | # | 事项 | Impact | Effort | 验收信号 |
 |---|---|---|---|---|
-| P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付） | 5 | 中 | 一条命令产出 accuracy/latency/token/$ 报告；配置哈希可复现 |
+| P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付；✅ 内置语料上的 full-context 与 naive RAG want 命中率。无 LLM-judge，无外部数据集） | 5 | 中 | 一条命令产出 accuracy/latency/token 报告；配置可复现 |
 | P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引；稠密仍是有界扫描，pgvector 未接） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
 | P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付；✅ HTTP rerank 默认关闭，失败回退加权/RRF 顺序。没有内置 cross-encoder） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
 | P0-4 | **时态 v3：valid_from/valid_to + source_message_id**（✅ 已交付） | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
@@ -359,7 +359,7 @@ memory_stats(entity_id?)
 
 - 已建 `eval/` 与 `cmd/memorigo-eval`，15 个场景进 CI。
 - 已输出表格式与 JSON 报告（accuracy / P95 / token）。
-- 待做：接入 LongMemEval dev + 50 条私有场景，补 full-context 与 naive RAG 基线。
+- 内置语料的 full-context 与 naive RAG want 命中率已交付。待做：LongMemEval dev + 私有场景，以及 LLM-judge。不把外部数据集提交进仓库。
 
 ### 第 3–5 周：检索升级（下一步）
 

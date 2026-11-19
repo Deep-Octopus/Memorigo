@@ -272,6 +272,27 @@ func Builtin() []Scenario {
 				},
 			},
 		},
+		{
+			Name:        "old-fact-budget",
+			Description: "An old exact fact falls outside a small recent window. Memory and naive top-k still return it.",
+			Seed: func(_ context.Context, m *memori.Memori) error {
+				if _, err := m.Remember("The garage code is 4821"); err != nil {
+					return err
+				}
+				for i := 0; i < 40; i++ {
+					if _, err := m.Remember(fmt.Sprintf("I bought another notebook today, copy %d", i)); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Queries: []QueryCase{{
+				Query:          "garage code",
+				Want:           []string{"4821"},
+				Limit:          5,
+				BaselineBudget: 80,
+			}},
+		},
 	}
 }
 

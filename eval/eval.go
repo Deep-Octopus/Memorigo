@@ -27,6 +27,9 @@ type QueryCase struct {
 	Want    []string
 	Avoid   []string
 	Context *ContextCheck
+	// BaselineBudget caps the full-context and naive-RAG packs for this
+	// query. Zero uses the context budget, or 800 tokens.
+	BaselineBudget int
 	// ExpectEmpty asserts that recall returns no facts (e.g. after Forget).
 	ExpectEmpty bool
 }
@@ -78,17 +81,26 @@ type QueryResult struct {
 	Coverage     float64       `json:"coverage,omitempty"`
 	Insufficient bool          `json:"insufficient,omitempty"`
 	Truncated    bool          `json:"truncated,omitempty"`
+	// BaselineCompared reports a want-string check against a recent-window
+	// full-context pack and a hash-cosine naive RAG pack. It is not an
+	// LLM-judge score and it does not change Passed.
+	BaselineCompared bool `json:"baseline_compared,omitempty"`
+	FullContextHit   bool `json:"full_context_hit,omitempty"`
+	NaiveRAGHit      bool `json:"naive_rag_hit,omitempty"`
 }
 
 // Report aggregates scenario results.
 type Report struct {
-	Results    []QueryResult `json:"results"`
-	Passed     int           `json:"passed"`
-	Failed     int           `json:"failed"`
-	AvgLatency time.Duration `json:"avg_latency_ns"`
-	P95Latency time.Duration `json:"p95_latency_ns"`
-	AvgTokens  int           `json:"avg_tokens"`
-	Duration   time.Duration `json:"duration_ns"`
+	Results         []QueryResult `json:"results"`
+	Passed          int           `json:"passed"`
+	Failed          int           `json:"failed"`
+	AvgLatency      time.Duration `json:"avg_latency_ns"`
+	P95Latency      time.Duration `json:"p95_latency_ns"`
+	AvgTokens       int           `json:"avg_tokens"`
+	Duration        time.Duration `json:"duration_ns"`
+	BaselineQueries int           `json:"baseline_queries,omitempty"`
+	FullContextHits int           `json:"full_context_hits,omitempty"`
+	NaiveRAGHits    int           `json:"naive_rag_hits,omitempty"`
 }
 
 // Options configures a run.
@@ -127,6 +139,15 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		totalLatency += r.Latency
 		latencies = append(latencies, r.Latency)
 		totalTokens += r.Tokens
+		if r.BaselineCompared {
+			report.BaselineQueries++
+			if r.FullContextHit {
+				report.FullContextHits++
+			}
+			if r.NaiveRAGHit {
+				report.NaiveRAGHits++
+			}
+		}
 	}
 	if len(report.Results) > 0 {
 		report.AvgLatency = totalLatency / time.Duration(len(report.Results))
@@ -197,6 +218,9 @@ func runScenario(ctx context.Context, sc Scenario) ([]QueryResult, error) {
 		}
 		result.Latency = time.Since(start)
 		results = append(results, result)
+	}
+	if err := annotateBaselines(ctx, m, sc.Queries, results); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
@@ -351,6 +375,10 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "\naccuracy: %d/%d (%.1f%%)  avg latency: %s  p95: %s  avg tokens: %d  duration: %s\n",
 		r.Passed, total, accuracy, r.AvgLatency.Round(time.Microsecond),
 		r.P95Latency.Round(time.Microsecond), r.AvgTokens, r.Duration.Round(time.Millisecond))
+	if r.BaselineQueries > 0 {
+		fmt.Fprintf(&b, "baselines (want-string hit rate, hash embedder, no LLM judge): full-context %d/%d, naive-rag %d/%d\n",
+			r.FullContextHits, r.BaselineQueries, r.NaiveRAGHits, r.BaselineQueries)
+	}
 	return b.String()
 }
 

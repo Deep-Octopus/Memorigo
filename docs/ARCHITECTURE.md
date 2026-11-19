@@ -80,7 +80,7 @@ flowchart TB
 | HTTP API | `api/`、`cmd/memorigo-api` | Bearer JSON。`/healthz` 不鉴权。默认 `127.0.0.1:8788` |
 | 文本 | `textutil/` | 归一化、分词、CJK bigram、句子切分、token 估算 |
 | MCP | `mcpserver/` | 六个记忆工具、静态 scope、进程内配额、JSONL 审计、stdio 与 stateless Streamable HTTP |
-| 评测 | `eval/` | 确定性场景、报告、JSON 输出 |
+| 评测 | `eval/` | 确定性场景、full-context / naive RAG want 命中率、报告、JSON 输出 |
 
 ---
 

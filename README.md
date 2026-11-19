@@ -346,10 +346,11 @@ go run ./cmd/memorigo-eval -json
 make eval
 ```
 
-15 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。
+16 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权、旧事实被短窗口挤出。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。同一条命令会附上 full-context 与 naive RAG 的 want 命中率。
 
 ```text
-accuracy: 15/15 (100.0%)  avg latency: 116µs  p95: 193µs  avg tokens: 28
+accuracy: 16/16 (100.0%)  avg latency: 299µs  p95: 470µs  avg tokens: 27
+baselines (want-string hit rate, hash embedder, no LLM judge): full-context 12/13, naive-rag 13/13
 ```
 
 （示例输出；延迟随机器与负载波动。）
@@ -546,17 +547,15 @@ docs/         架构、MCP、评测、路线图
 - 自动注入（含流式）与原始消息持久化
 - 嵌入模型/维度治理 + Reindex
 - Token 预算上下文 + 引用 + 原始证据 + 常驻画像三通道
-- 15 场景确定性评测 + CLI + CI
+- 16 场景确定性评测 + full-context / naive RAG want 命中率 + CLI + CI
 - MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
-1. LongMemEval / 私有场景 + full-context / naive-RAG 三基线
-2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
-3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
-4. 多租户（org/app）+ RLS + 导出/删除合规
-5. 评测三基线、薄框架适配
+1. 薄框架适配示例（不把 Eino / Genkit 引进依赖）
+2. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
+3. 数据库 RLS、OAuth、OTel。稠密 ANN 仍不默认引入 cgo
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -567,7 +566,7 @@ docs/         架构、MCP、评测、路线图
 - 召回目前是候选集 + Go 内打分，没有 ANN 索引；1,000 条事实约 10–11 ms，规模更大时请关注延迟并等待 ANN/FTS5。
 - 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
 - `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
-- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**，也没有 LLM-judge 三基线。
+- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里，没有 LLM-judge。
 - MCP HTTP 使用 Bearer token。工具授权是进程启动时的静态 allow-list，配额只计本进程，审计是本地 JSONL。没有 OAuth，也没有多租户 RLS。
 - MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
 - 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
