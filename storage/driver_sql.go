@@ -15,6 +15,12 @@ type SQLDriver struct {
 
 	once sync.Once
 	base Repos
+
+	// tenantMu guards the org/app pair copied into a transaction-local GUC
+	// when Postgres RLS is on. Application-layer keys do not read it.
+	tenantMu sync.RWMutex
+	org      string
+	app      string
 }
 
 func newSQLDriver(dialect string) driverFactory {
@@ -33,7 +39,7 @@ func (d *SQLDriver) db() *sql.DB { return d.a.DB }
 
 func (d *SQLDriver) baseRepos() Repos {
 	d.once.Do(func() {
-		d.base = newSQLRepos(d.a.DB, d.dialect)
+		d.base = newSQLRepos(d.a.DB, d.dialect, d)
 	})
 	return d.base
 }
@@ -49,11 +55,16 @@ func (d *SQLDriver) Subject() SubjectRepo           { return d.baseRepos().Subje
 // Transaction runs fn inside a database transaction. Repositories handed to fn
 // are bound to the transaction; any error rolls the whole unit back.
 func (d *SQLDriver) Transaction(ctx context.Context, fn func(Repos) error) error {
+	// Install policies before the callback transaction starts. Doing that
+	// inside the callback deadlocks when the pool has one connection.
+	if err := d.ensureRLS(ctx); err != nil {
+		return err
+	}
 	tx, err := d.a.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := fn(newSQLRepos(tx, d.dialect)); err != nil {
+	if err := fn(newSQLRepos(tx, d.dialect, d)); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -63,6 +74,9 @@ func (d *SQLDriver) Transaction(ctx context.Context, fn func(Repos) error) error
 func (d *SQLDriver) Migrate() error {
 	if d.a == nil || d.a.DB == nil {
 		return nil
+	}
+	if err := d.rejectRLSIfDisabled(context.Background()); err != nil {
+		return err
 	}
 
 	var migrations map[int][]string
@@ -79,6 +93,9 @@ func (d *SQLDriver) Migrate() error {
 	maxVersion := maxSQLMigrationVersion(migrations)
 	if currentVersion >= maxVersion {
 		if err := d.backfillSearchText(); err != nil {
+			return err
+		}
+		if err := d.ensureRLS(context.Background()); err != nil {
 			return err
 		}
 		return d.requirePGVector()
@@ -119,6 +136,9 @@ func (d *SQLDriver) Migrate() error {
 	if err := d.backfillSearchText(); err != nil {
 		return err
 	}
+	if err := d.ensureRLS(context.Background()); err != nil {
+		return err
+	}
 	return d.requirePGVector()
 }
 
@@ -126,7 +146,32 @@ func (d *SQLDriver) Migrate() error {
 // search column existed. Rows that already have a document are skipped.
 // SQLite triggers mirror the column into FTS5 when it changes.
 func (d *SQLDriver) backfillSearchText() error {
-	rows, err := d.a.DB.Query(`SELECT id, content FROM memori_entity_fact WHERE search_text = ''`)
+	ctx := context.Background()
+	active, err := d.rlsActive(ctx)
+	if err != nil {
+		return err
+	}
+	// Policies hide every row when the tenant GUC is unset. Maintenance has
+	// to see every tenant, and only the table owner can turn row_security off.
+	run := func(q stdSQL) error {
+		return backfillSearchTextOn(ctx, d.dialect, q)
+	}
+	if active {
+		return bypassRLS(ctx, d.db(), run)
+	}
+	tx, err := d.db().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := run(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func backfillSearchTextOn(ctx context.Context, dialect string, q stdSQL) error {
+	rows, err := q.QueryContext(ctx, `SELECT id, content FROM memori_entity_fact WHERE search_text = ''`)
 	if err != nil {
 		return err
 	}
@@ -153,26 +198,20 @@ func (d *SQLDriver) backfillSearchText() error {
 		return nil
 	}
 
-	tx, err := d.a.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
 	stmt := fmt.Sprintf(
 		`UPDATE memori_entity_fact SET search_text = %s WHERE id = %s AND search_text = ''`,
-		sqlPlaceholder(d.dialect, 1), sqlPlaceholder(d.dialect, 2),
+		sqlPlaceholder(dialect, 1), sqlPlaceholder(dialect, 2),
 	)
 	for _, row := range batch {
 		doc := textutil.SearchDocument(row.content)
 		if doc == "" {
 			doc = " "
 		}
-		if _, err := tx.Exec(stmt, doc, row.id); err != nil {
+		if _, err := q.ExecContext(ctx, stmt, doc, row.id); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (d *SQLDriver) getSchemaVersion() int {

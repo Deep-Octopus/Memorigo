@@ -120,17 +120,43 @@ WHERE session_id IN (SELECT id FROM memori_session WHERE entity_id = %s)`, ph), 
 	if err != nil {
 		return report, err
 	}
-	if _, err = execCount(ctx, r.q, `DELETE FROM memori_subject WHERE id NOT IN (SELECT subject_id FROM memori_knowledge_graph)`); err != nil {
-		return report, err
-	}
-	if _, err = execCount(ctx, r.q, `DELETE FROM memori_predicate WHERE id NOT IN (SELECT predicate_id FROM memori_knowledge_graph)`); err != nil {
-		return report, err
-	}
-	if _, err = execCount(ctx, r.q, `DELETE FROM memori_object WHERE id NOT IN (SELECT object_id FROM memori_knowledge_graph)`); err != nil {
+	if err := deleteUnreferencedVocab(ctx, r.q, r.dialect); err != nil {
 		return report, err
 	}
 	report.Entities, err = execCount(ctx, r.q, "DELETE FROM memori_entity WHERE id = "+ph, entityID)
 	return report, err
+}
+
+// deleteUnreferencedVocab removes subject, predicate and object rows that no
+// knowledge-graph edge references. Those tables are global. Under Postgres
+// RLS the edge subquery would only see the current tenant, so a tenant with
+// no remaining edges would delete every other tenant's words. The bypass
+// reads every edge, then row security is turned back on for the entity delete.
+func deleteUnreferencedVocab(ctx context.Context, q sqlQuerier, dialect string) error {
+	stmts := []string{
+		`DELETE FROM memori_subject WHERE id NOT IN (SELECT subject_id FROM memori_knowledge_graph)`,
+		`DELETE FROM memori_predicate WHERE id NOT IN (SELECT predicate_id FROM memori_knowledge_graph)`,
+		`DELETE FROM memori_object WHERE id NOT IN (SELECT object_id FROM memori_knowledge_graph)`,
+	}
+	bypass, _ := q.(interface {
+		ExecBypass(context.Context, string, ...any) (sql.Result, error)
+	})
+	useBypass := dialect == "postgres" && rlsMode() == "on"
+	if useBypass && bypass == nil {
+		return fmt.Errorf("storage: MEMORI_RLS=on cannot clean graph vocabulary without seeing every tenant's edges")
+	}
+	for _, stmt := range stmts {
+		var err error
+		if useBypass {
+			_, err = bypass.ExecBypass(ctx, stmt)
+		} else {
+			_, err = execCount(ctx, q, stmt)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func execCount(ctx context.Context, q sqlQuerier, query string, args ...any) (int64, error) {

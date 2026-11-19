@@ -63,7 +63,7 @@ func (r *sqlEntityFactRepo) SearchSimilar(ctx context.Context, entityID int64, e
 	if r.dialect != "postgres" || pgVectorMode() == "off" || len(embedding) == 0 {
 		return nil, nil
 	}
-	db, ok := r.q.(*sql.DB)
+	db, ok := sqlDB(r.q)
 	if !ok {
 		return nil, nil
 	}
@@ -98,7 +98,7 @@ FROM memori_entity_fact
 WHERE entity_id = $1 AND status = 'active' AND content_embedding_vec IS NOT NULL
 ORDER BY content_embedding_vec <=> $2::vector
 LIMIT $3`
-	rows, err := db.QueryContext(ctx, stmt, entityID, lit, limit)
+	rows, err := r.q.QueryContext(ctx, stmt, entityID, lit, limit)
 	if err != nil {
 		if pgVectorMode() != "on" {
 			logPGVector(db, err)
@@ -113,7 +113,7 @@ func (r *sqlEntityFactRepo) syncPGVector(ctx context.Context, id int64, embeddin
 	if r.dialect != "postgres" || pgVectorMode() == "off" || len(embedding) == 0 || len(embedding)%4 != 0 {
 		return nil
 	}
-	db, ok := r.q.(*sql.DB)
+	db, ok := sqlDB(r.q)
 	if !ok {
 		return nil
 	}
@@ -134,7 +134,7 @@ func (r *sqlEntityFactRepo) syncPGVector(ctx context.Context, id int64, embeddin
 		}
 		return err
 	}
-	_, err = db.ExecContext(ctx, `UPDATE memori_entity_fact SET content_embedding_vec = $1::vector WHERE id = $2`, lit, id)
+	_, err = r.q.ExecContext(ctx, `UPDATE memori_entity_fact SET content_embedding_vec = $1::vector WHERE id = $2`, lit, id)
 	if err != nil && pgVectorMode() != "on" {
 		logPGVector(db, err)
 		return nil
@@ -251,8 +251,17 @@ WHERE c.relname = 'memori_entity_fact'
 }
 
 func backfillPGVector(ctx context.Context, db *sql.DB, dim int) error {
+	if rlsMode() == "on" {
+		return bypassRLS(ctx, db, func(q stdSQL) error {
+			return backfillPGVectorOn(ctx, q, dim)
+		})
+	}
+	return backfillPGVectorOn(ctx, db, dim)
+}
+
+func backfillPGVectorOn(ctx context.Context, q stdSQL, dim int) error {
 	for {
-		rows, err := db.QueryContext(ctx, `
+		rows, err := q.QueryContext(ctx, `
 SELECT id, content_embedding
 FROM memori_entity_fact
 WHERE content_embedding_vec IS NULL
@@ -288,7 +297,7 @@ LIMIT 200`, dim, dim*4)
 			if err != nil {
 				return err
 			}
-			if _, err := db.ExecContext(ctx, `UPDATE memori_entity_fact SET content_embedding_vec = $1::vector WHERE id = $2`, lit, row.id); err != nil {
+			if _, err := q.ExecContext(ctx, `UPDATE memori_entity_fact SET content_embedding_vec = $1::vector WHERE id = $2`, lit, row.id); err != nil {
 				return err
 			}
 		}

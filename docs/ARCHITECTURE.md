@@ -20,7 +20,7 @@
 - 不做通用 GraphRAG / 社区摘要。
 - 不把 LLM 抽取放进同步写路径。
 - 不默认引入外部向量数据库。
-- 跨租户隔离在应用层完成（`SetScope`）；还没有数据库 RLS。
+- 跨租户隔离默认在应用层完成（`SetScope` / `ScopedExternalID`）。`MEMORI_RLS=on` 时 PostgreSQL 再加一层 `FORCE ROW LEVEL SECURITY`，不替换应用层键。SQLite 与 MongoDB 不变。超级用户和 `BYPASSRLS` 仍绕过。
 
 ---
 
@@ -129,6 +129,14 @@ superseded / deleted 不参与召回，但保留行与来源，便于审计。
 | `""` | 否 | 无结构事实 |
 
 互斥判定集中在 `isExclusiveSlot`；LLM 抽取返回的 `exclusive` 也会与 slot 规则取并集。
+
+### 租户
+
+默认隔离是应用层键：`SetScope` 把 org 和 app 编进 `external_id`（`ScopedExternalID`），并写入 `memori_entity.org_id` / `app_id`。空 scope 保持历史键。
+
+`MEMORI_RLS=on` 时，PostgreSQL 再加一层。驱动在版本化迁移之外，对 entity、session、conversation、message、fact 和 knowledge graph 边执行 `ENABLE` 与 `FORCE ROW LEVEL SECURITY`，并在每条查询所在的事务里设置 `app.memorigo_org_id` 与 `app.memorigo_app_id`。未设置这两个参数时策略不匹配任何行。SQLite 和 MongoDB 忽略该变量。schema 仍是版本 5。
+
+这一层不替换应用层键。超级用户和 `BYPASSRLS` 仍绕过策略。表所有者本可绕过，所以这里使用 `FORCE`；所有者仍可用 `row_security=off` 做维护，驱动只在回填和图谱词表清理时这样设置。进程、进程属性和 subject/predicate/object 词表没有租户列，不在策略里。两个 `Memori` 如果要不同租户，应各自持有驱动；并发隔离仍以应用层键为准。
 
 ---
 
@@ -421,7 +429,7 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - **不做全量图构建**：当前场景以单跳事实查询为主；图结构在评测证明收益前不进入默认路径。
 - **不把注入内容写回消息表**：否则下一轮会把“模型看到的记忆”当成“用户说过的话”，造成自我强化。
 - **不混用不同嵌入模型的向量**：维度相同也不代表语义空间一致；必须按 model/dim 治理。
-- **主体数据**：`Export` 产出版本 1 JSON（全部状态的事实 + 消息，不含向量）。`DeleteSubject` 按实体硬删除事实、消息、会话和知识图谱边，并清掉不再被引用的图谱词表。进程行保留。`MEMORI_PII_REDACT` 只处理邮箱、电话和 Luhn 卡号，默认关闭。这不是密钥粉碎，也不是行级安全策略。
+- **主体数据**：`Export` 产出版本 1 JSON（全部状态的事实 + 消息，不含向量）。`DeleteSubject` 按实体硬删除事实、消息、会话和知识图谱边，并清掉不再被引用的图谱词表。进程行保留。`MEMORI_PII_REDACT` 只处理邮箱、电话和 Luhn 卡号，默认关闭。这不是密钥粉碎。可选的 Postgres RLS 不替代这次删除，也不替代应用层键。
 
 ---
 

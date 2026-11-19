@@ -30,6 +30,14 @@ type Transactional interface {
 	Transaction(ctx context.Context, fn func(Repos) error) error
 }
 
+// TenantSetter receives the current organization and application. PostgreSQL
+// row-level security reads the pair when MEMORI_RLS=on. ScopedExternalID still
+// isolates rows either way. MongoDB does not implement this. SQLite accepts
+// the call and does not filter with it.
+type TenantSetter interface {
+	SetTenant(org, app string)
+}
+
 type EntityRepo interface {
 	Create(ctx context.Context, externalID string) (int64, error)
 	GetByExternalID(ctx context.Context, externalID string) (int64, error)

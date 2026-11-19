@@ -81,6 +81,7 @@ func New(opts ...Option) *Memori {
 		m.logger = newLogger(m.Config.LogLevel)
 	}
 	if m.initErr == nil && m.Storage.Driver() != nil {
+		m.pushTenantFromConfig()
 		if err := m.Storage.Build(); err != nil {
 			m.initErr = err
 			m.logger.Error("storage migration failed", "error", err)
@@ -211,7 +212,9 @@ func (m *Memori) Attribution(entityID, processID string) *Memori {
 // SetScope binds later reads and writes to an organization and application.
 // Empty values mean a single-tenant installation. IDs are limited to 100
 // characters. Facts stored under one scope are invisible to another, even
-// when the entity id is the same.
+// when the entity id is the same. When MEMORI_RLS=on, the same pair is also
+// applied as a Postgres transaction setting. That policy does not replace
+// this application-layer key. SQLite and MongoDB ignore it.
 func (m *Memori) SetScope(orgID, appID string) error {
 	if utf8.RuneCountInString(orgID) > 100 || utf8.RuneCountInString(appID) > 100 {
 		return errors.New("memori: org_id and app_id cannot be longer than 100 characters")
@@ -220,7 +223,29 @@ func (m *Memori) SetScope(orgID, appID string) error {
 	m.Config.OrgID = orgID
 	m.Config.AppID = appID
 	m.Config.mu.Unlock()
+	m.pushTenant(orgID, appID)
 	return nil
+}
+
+func (m *Memori) pushTenantFromConfig() {
+	if m.Config == nil {
+		return
+	}
+	m.Config.mu.Lock()
+	org, app := m.Config.OrgID, m.Config.AppID
+	m.Config.mu.Unlock()
+	m.pushTenant(org, app)
+}
+
+func (m *Memori) pushTenant(org, app string) {
+	if m.Storage == nil {
+		return
+	}
+	setter, ok := m.Storage.Driver().(storage.TenantSetter)
+	if !ok {
+		return
+	}
+	setter.SetTenant(org, app)
 }
 
 // TryAttribution is the error-returning variant of Attribution.

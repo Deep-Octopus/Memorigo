@@ -13,12 +13,27 @@ import (
 	"github.com/Deep-Octopus/Memorigo/textutil"
 )
 
-// sqlQuerier is implemented by *sql.DB and *sql.Tx so every repository can run
-// either standalone or inside a transaction without duplication.
+// sqlRows is the subset of *sql.Rows repositories consume. The Postgres RLS
+// wrapper returns its own type so it can release the transaction that carried
+// the tenant setting.
+type sqlRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+}
+
+// sqlRow is the subset of *sql.Row repositories consume.
+type sqlRow interface {
+	Scan(dest ...any) error
+}
+
+// sqlQuerier is implemented for *sql.DB and *sql.Tx so every repository can
+// run either standalone or inside a transaction without duplication.
 type sqlQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (sqlRows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) sqlRow
 }
 
 func sqlPlaceholder(dialect string, n int) string {
@@ -279,7 +294,7 @@ LIMIT %s`, sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2))
 	return out, nil
 }
 
-func scanStoredMessages(rows *sql.Rows, capacity int) ([]StoredMessage, error) {
+func scanStoredMessages(rows sqlRows, capacity int) ([]StoredMessage, error) {
 	defer rows.Close()
 	out := make([]StoredMessage, 0, capacity)
 	for rows.Next() {
@@ -431,7 +446,7 @@ func (r *sqlEntityFactRepo) SupersedeSlot(ctx context.Context, entityID int64, s
 	return err
 }
 
-func (r *sqlEntityFactRepo) scanFacts(rows *sql.Rows) ([]FactResult, error) {
+func (r *sqlEntityFactRepo) scanFacts(rows sqlRows) ([]FactResult, error) {
 	defer rows.Close()
 	out := make([]FactResult, 0, 64)
 	for rows.Next() {
@@ -790,15 +805,19 @@ type sqlReposBundle struct {
 	subject      *sqlSubjectRepo
 }
 
-func newSQLRepos(q sqlQuerier, dialect string) Repos {
+func newSQLRepos(q stdSQL, dialect string, owner *SQLDriver) Repos {
+	var querier sqlQuerier = plainQuerier{std: q}
+	if dialect == "postgres" && owner != nil {
+		querier = &rlsQuerier{std: q, driver: owner}
+	}
 	return &sqlReposBundle{
-		entity:       &sqlEntityRepo{q: q, dialect: dialect},
-		process:      &sqlProcessRepo{q: q, dialect: dialect},
-		session:      &sqlSessionRepo{q: q, dialect: dialect},
-		conversation: &sqlConversationRepo{q: q, dialect: dialect},
-		message:      &sqlMessageRepo{q: q, dialect: dialect},
-		entityFact:   &sqlEntityFactRepo{q: q, dialect: dialect},
-		subject:      &sqlSubjectRepo{q: q, dialect: dialect},
+		entity:       &sqlEntityRepo{q: querier, dialect: dialect},
+		process:      &sqlProcessRepo{q: querier, dialect: dialect},
+		session:      &sqlSessionRepo{q: querier, dialect: dialect},
+		conversation: &sqlConversationRepo{q: querier, dialect: dialect},
+		message:      &sqlMessageRepo{q: querier, dialect: dialect},
+		entityFact:   &sqlEntityFactRepo{q: querier, dialect: dialect},
+		subject:      &sqlSubjectRepo{q: querier, dialect: dialect},
 	}
 }
 

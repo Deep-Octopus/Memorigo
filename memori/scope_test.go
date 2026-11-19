@@ -3,6 +3,8 @@ package memori_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/Deep-Octopus/Memorigo/storage"
 )
 
 func TestScopeIsolatesTheSameEntityID(t *testing.T) {
@@ -49,6 +51,28 @@ func TestScopeIsolatesTheSameEntityID(t *testing.T) {
 	}
 	if containsFact(facts, "1001") || containsFact(facts, "2002") {
 		t.Fatalf("unscoped recall crossed tenants: %#v", facts)
+	}
+}
+
+func TestSetScopePushesTenant(t *testing.T) {
+	m := newTestMemoriWithEnv(t, map[string]string{
+		"MEMORI_ORG_ID": "from-env",
+		"MEMORI_APP_ID": "billing",
+	})
+	driver, ok := m.Storage.Driver().(*storage.SQLDriver)
+	if !ok {
+		t.Fatalf("driver type %T", m.Storage.Driver())
+	}
+	org, app := driver.Tenant()
+	if org != "from-env" || app != "billing" {
+		t.Fatalf("startup tenant = %q %q", org, app)
+	}
+	if err := m.SetScope("acme", "support"); err != nil {
+		t.Fatal(err)
+	}
+	org, app = driver.Tenant()
+	if org != "acme" || app != "support" {
+		t.Fatalf("SetScope tenant = %q %q", org, app)
 	}
 }
 

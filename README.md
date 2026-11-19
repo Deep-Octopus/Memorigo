@@ -443,6 +443,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_EXTRACTION_MAX_FACTS` | `20` | 单轮最多事实数 |
 | `MEMORI_EXTRACTION_MERGE_THRESHOLD` | `0.97` | 无语义槽位事实的近重复阈值 |
 | `MEMORI_PII_REDACT` | `false` | 写入前遮盖邮箱、电话和通过 Luhn 的卡号 |
+| `MEMORI_RLS` | `off` | `on` 时 PostgreSQL 对实体、会话、消息、事实和知识图谱边启用 `FORCE ROW LEVEL SECURITY`。不替换应用层 `org/app`。SQLite 与 MongoDB 忽略。超级用户和 `BYPASSRLS` 仍绕过 |
 
 ### 召回
 
@@ -560,11 +561,12 @@ docs/         架构、MCP、评测、路线图
 - 外部评测：LongMemEval oracle 的下载脚本和 SHA-256。数据集不在仓库里。可选 HTTP judge 默认关闭，不改变通过与否，也不在同步写路径
 - 可选 pgvector：PostgreSQL 在 vector 扩展已安装且维度一致时，用 HNSW 补充稠密候选。驱动不安装扩展。SQLite 仍是有界扫描，默认构建仍是纯 Go
 - MCP OAuth：HTTP 在静态 Bearer 之外可校验 HS256 或 RS256 JWT。scope 不能超出进程允许列表，也不能绕过只读。服务不签发令牌。stdio 与 JSONL 审计不变
+- 可选 Postgres RLS：`MEMORI_RLS` 默认关闭。打开后在应用层 `org/app` 之外对实体、会话、消息、事实和知识图谱边启用 `FORCE ROW LEVEL SECURITY`。策略不进版本化迁移。SQLite 与 MongoDB 不变。超级用户和 `BYPASSRLS` 仍绕过
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
-1. 数据库 RLS、OTel。各自加在现有应用层 org/app、JSONL 审计之上，不替换它们
+1. OTel。加在现有 JSONL 审计之上，不替换它
 2. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。`-external-limit` 不是 LongMemEval 论文分数。稠密 ANN 仍不默认引入 cgo
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
@@ -577,7 +579,8 @@ docs/         架构、MCP、评测、路线图
 - 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
 - `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
 - 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里。LLM-judge 需显式设置 `MEMORI_EVAL_JUDGE`，默认关闭，且不改变这 16 个场景的通过与否。
-- MCP HTTP 默认使用静态 Bearer。配置 issuer、audience 和 HMAC 或 RSA 公钥后，同时接受 HS256 或 RS256 JWT。JWT 的 scope 不能扩大 `-scopes`，也不能绕过只读。服务不签发令牌。配额只计本进程，审计是本地 JSONL。没有数据库 RLS。
+- MCP HTTP 默认使用静态 Bearer。配置 issuer、audience 和 HMAC 或 RSA 公钥后，同时接受 HS256 或 RS256 JWT。JWT 的 scope 不能扩大 `-scopes`，也不能绕过只读。服务不签发令牌。配额只计本进程，审计是本地 JSONL。
+- 可选 Postgres RLS（`MEMORI_RLS`，默认关闭）加在应用层 `org/app` 之上，不替换 `ScopedExternalID`。SQLite 和 MongoDB 不执行策略。超级用户和 `BYPASSRLS` 绕过。进程行和知识图谱词表没有租户列。关闭变量不会删除已经装上的策略；这种库在启动时会报错。
 - MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
 - 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
 - 官方 MCP Go SDK 要求 **Go 1.25+**；纯 Go 构建仍为默认路径。

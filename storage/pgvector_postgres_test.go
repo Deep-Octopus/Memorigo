@@ -22,6 +22,7 @@ func TestPGVectorPostgresScratchSchema(t *testing.T) {
 	if dsn == "" {
 		t.Skip("MEMORI_PGVECTOR_TEST_DSN is not set")
 	}
+	t.Setenv("MEMORI_RLS", "off")
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
