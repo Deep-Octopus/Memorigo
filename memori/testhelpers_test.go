@@ -52,6 +52,7 @@ func newTestMemoriDBWithEnv(t *testing.T, env map[string]string, opts ...memori.
 	t.Setenv("MEMORI_PROFILE_DYNAMIC", "false")
 	t.Setenv("MEMORI_PROFILE_BUDGET", "200")
 	t.Setenv("MEMORI_PROFILE_LIMIT", "40")
+	t.Setenv("MEMORI_OTEL_ENDPOINT", "")
 	for k, v := range env {
 		t.Setenv(k, v)
 	}

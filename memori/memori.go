@@ -329,7 +329,15 @@ func (m *Memori) Recall(query string, limit int) ([]Fact, error) {
 
 // RecallContext is Recall with caller-controlled cancellation.
 func (m *Memori) RecallContext(ctx context.Context, query string, limit int) ([]Fact, error) {
-	ranked, err := m.recallRanked(ctx, query, limit)
+	start := time.Now()
+	ranked, meta, err := m.recallRanked(ctx, query, limit)
+	m.finishSpan(otelSpanRecall, start, err, otelFields{
+		candidates: meta.candidates,
+		hits:       len(ranked),
+		skipped:    meta.skipped,
+		model:      embedModel(m),
+		dimension:  embedDim(m),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -339,24 +347,24 @@ func (m *Memori) RecallContext(ctx context.Context, query string, limit int) ([]
 // recallRanked resolves the current entity and returns the full hybrid ranking
 // (including component scores) without converting to the public Fact shape.
 // BuildContext uses the extra fields for diversity selection.
-func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]rankedFact, error) {
+func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]rankedFact, recallMeta, error) {
 	if m.closed.Load() {
-		return nil, ErrClosed
+		return nil, recallMeta{}, ErrClosed
 	}
 	if err := m.Err(); err != nil {
-		return nil, err
+		return nil, recallMeta{}, err
 	}
 	if m.Storage == nil || m.Storage.Driver() == nil {
-		return nil, nil
+		return nil, recallMeta{}, nil
 	}
 	repos, ok := m.Storage.Driver().(storage.Repos)
 	if !ok {
-		return nil, errors.New("memori: storage driver does not implement Repos")
+		return nil, recallMeta{}, errors.New("memori: storage driver does not implement Repos")
 	}
 
 	snap := m.Config.snapshot()
 	if snap.EntityID == "" {
-		return nil, nil
+		return nil, recallMeta{}, nil
 	}
 	if limit <= 0 {
 		limit = snap.RecallLimit
@@ -367,15 +375,15 @@ func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]r
 
 	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
-		return nil, nil
+		return nil, recallMeta{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, recallMeta{}, err
 	}
 	return m.recallRankedForEntity(ctx, repos, entityID, query, limit, snap, "")
 }
 
-func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos, entityID int64, query string, limit int, snap configSnapshot, existing string) ([]rankedFact, error) {
+func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos, entityID int64, query string, limit int, snap configSnapshot, existing string) ([]rankedFact, recallMeta, error) {
 	if limit <= 0 {
 		limit = snap.RecallLimit
 	}
@@ -384,7 +392,7 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 	}
 	decision := DecideRecall(query, existing, snap.Recall.Adaptive, snap.Recall.AdaptiveCoverage)
 	if decision.Skip {
-		return nil, nil
+		return nil, recallMeta{skipped: decision.Reason}, nil
 	}
 	query = decision.Query
 	var queryEmbedding []float32
@@ -400,7 +408,7 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 
 	candidates, err := repos.EntityFact().Candidates(ctx, entityID, snap.Recall.ScanLimit)
 	if err != nil {
-		return nil, err
+		return nil, recallMeta{}, err
 	}
 	if strings.TrimSpace(query) != "" {
 		lexicalLimit := snap.Recall.LexicalLimit
@@ -419,7 +427,7 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 				hits, simErr := similar.SearchSimilar(ctx, entityID, queryEmbedding, lexicalLimit)
 				if simErr != nil {
 					// MEMORI_PGVECTOR=on is the only mode that returns this error.
-					return nil, simErr
+					return nil, recallMeta{}, simErr
 				}
 				candidates = mergeFactResults(candidates, hits)
 			}
@@ -432,7 +440,7 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
-	return ranked, nil
+	return ranked, recallMeta{candidates: len(candidates)}, nil
 }
 
 // visibleFacts hides assistant and inferred facts unless the caller opts in.
@@ -564,34 +572,46 @@ func (m *Memori) RememberWith(content string, opts RememberOptions) (int64, erro
 }
 
 func (m *Memori) rememberCandidates(candidates []CandidateFact) (int64, error) {
+	start := time.Now()
+	id, stored, err := m.rememberStored(candidates)
+	m.finishSpan(otelSpanRemember, start, err, otelFields{
+		candidates: len(candidates),
+		hits:       stored,
+		model:      embedModel(m),
+		dimension:  embedDim(m),
+	})
+	return id, err
+}
+
+func (m *Memori) rememberStored(candidates []CandidateFact) (int64, int, error) {
 	if m.closed.Load() {
-		return 0, ErrClosed
+		return 0, 0, ErrClosed
 	}
 	if err := m.Err(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	repos, err := m.repos()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	snap := m.Config.snapshot()
 	if snap.EntityID == "" {
-		return 0, ErrNoAttribution
+		return 0, 0, ErrNoAttribution
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
 	defer cancel()
 	entityID, err := m.ids.entity(ctx, repos, entityKey(snap))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	ids, err := m.Augmentation.storeFacts(ctx, entityID, nil, candidates, true)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if len(ids) == 0 {
-		return 0, errors.New("memori: fact was not stored")
+		return 0, 0, errors.New("memori: fact was not stored")
 	}
-	return ids[0], nil
+	return ids[0], len(ids), nil
 }
 
 // Forget soft-deletes a fact so it no longer appears in recall.

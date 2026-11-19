@@ -112,6 +112,9 @@ type ContextPackage struct {
 	RecallSkipped bool `json:"recall_skipped,omitempty"`
 	// RecallSkipReason is "empty", "greeting", or "sufficient".
 	RecallSkipReason string `json:"recall_skip_reason,omitempty"`
+	// spanCandidates is the fact pool size before diversity selection.
+	// It is copied onto the optional trace and is not part of the JSON API.
+	spanCandidates int
 }
 
 // BuildContext recalls facts and, optionally, raw conversation evidence, then
@@ -119,6 +122,20 @@ type ContextPackage struct {
 // always-on profile is a third channel: it is packed first because it is
 // query-independent and small, while facts and raw evidence share the rest.
 func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOptions) (ContextPackage, error) {
+	start := time.Now()
+	pkg, err := m.buildContext(ctx, query, opts)
+	m.finishSpan(otelSpanBuildContext, start, err, otelFields{
+		candidates: pkg.spanCandidates,
+		hits:       pkg.FactCount,
+		tokens:     pkg.Tokens,
+		skipped:    pkg.RecallSkipReason,
+		model:      embedModel(m),
+		dimension:  embedDim(m),
+	})
+	return pkg, err
+}
+
+func (m *Memori) buildContext(ctx context.Context, query string, opts ContextOptions) (ContextPackage, error) {
 	pkg := ContextPackage{Query: query}
 	if m.closed.Load() {
 		return pkg, ErrClosed
@@ -215,10 +232,12 @@ func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOpt
 		if factCandidates > maxContextCandidates {
 			factCandidates = maxContextCandidates
 		}
-		ranked, err = m.recallRankedForEntity(ctx, repos, entityID, recallQuery, factCandidates, snap, opts.Existing)
+		var meta recallMeta
+		ranked, meta, err = m.recallRankedForEntity(ctx, repos, entityID, recallQuery, factCandidates, snap, opts.Existing)
 		if err != nil {
 			return pkg, err
 		}
+		pkg.spanCandidates = meta.candidates
 	}
 	lambda := opts.MMRLambda
 	if opts.DisableDiversity {

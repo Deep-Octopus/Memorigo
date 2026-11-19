@@ -138,6 +138,10 @@ superseded / deleted 不参与召回，但保留行与来源，便于审计。
 
 这一层不替换应用层键。超级用户和 `BYPASSRLS` 仍绕过策略。表所有者本可绕过，所以这里使用 `FORCE`；所有者仍可用 `row_security=off` 做维护，驱动只在回填和图谱词表清理时这样设置。进程、进程属性和 subject/predicate/object 词表没有租户列，不在策略里。两个 `Memori` 如果要不同租户，应各自持有驱动；并发隔离仍以应用层键为准。
 
+### 可观测
+
+`MEMORI_OTEL_ENDPOINT` 为空时不导出。设为 `http` 或 `https` 基址后，`Recall`、`Remember`、`BuildContext` 各在返回结果之后 POST 一条 OTLP/HTTP JSON span 到 `/v1/traces`。属性是候选数、命中数、token 估算、耗时、嵌入模型与维度。查询和记忆正文不进 span。收集端失败、地址无效或超时都不改变调用结果。这不是指标，也不是成本核算。MCP 的 JSONL 审计仍然是审计记录。
+
 ---
 
 ## 4. 写路径
@@ -467,6 +471,6 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - `mcpserver` 只做协议适配，新增工具应复用 `Memori` 公共 API；HTTP 传输可复用同一 server。
 - `eval.Scenario` 可挂接外部数据集读取器，同时保留当前零依赖回归集。
 - `Transactional` 已为未来 Mongo 副本集事务留出实现位。
-- `Stats` 可扩展为 Prometheus/OTel 指标源。
+- `Stats` 仍是进程内计数。可选 OTel 只导出 span，还不是 Prometheus 或成本指标。
 
 具体路线见 [ROADMAP.md](ROADMAP.md)。

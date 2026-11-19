@@ -117,8 +117,20 @@ type Config struct {
 	Rerank     RerankConfig
 	Profile    ProfileConfig
 	Privacy    PrivacyConfig
+	Otel       OtelConfig
 	Storage    StorageConfig
 	LLM        LLMConfig
+}
+
+// OtelConfig exports spans for Recall, Remember, and BuildContext.
+// An empty Endpoint leaves those calls unchanged. This is not metrics, not
+// cost accounting, and not a replacement for the MCP JSONL audit.
+type OtelConfig struct {
+	// Endpoint is an OTLP/HTTP base URL such as http://127.0.0.1:4318.
+	// Spans are posted to /v1/traces. Userinfo and query strings are rejected.
+	Endpoint string
+	// Service is the resource attribute service.name. Empty uses memorigo.
+	Service string
 }
 
 // configSnapshot is a lock-free copy of the fields used by request paths.
@@ -199,6 +211,10 @@ func newConfig() *Config {
 		},
 		Privacy: PrivacyConfig{
 			Redact: envBool("MEMORI_PII_REDACT", false),
+		},
+		Otel: OtelConfig{
+			Endpoint: envString("MEMORI_OTEL_ENDPOINT", ""),
+			Service:  envString("MEMORI_OTEL_SERVICE_NAME", "memorigo"),
 		},
 	}
 	return c

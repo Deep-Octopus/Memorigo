@@ -109,7 +109,7 @@
 2. **数据集分层**：LoCoMo/LongMemEval 全量或固定子集；另建 50–100 条私有场景（改名、搬家、偏好反转、跨 session 指代），防止污染与过拟合。
 3. **双通道指标**：分别报告“仅事实”与“事实 + 原始消息”的增益，量化 memory tax。
 4. **确定性回归**：写入幂等、slot 覆盖、软删除、租户隔离、embedding 维度不混用，全部用 `go test` 固化；LLM 只测质量。
-5. **可观测**：每次 recall 产生一条 OTel span，带候选数、命中数、token、耗时、模型与维度；评测与生产共用指标。
+5. **可观测**：✅ `MEMORI_OTEL_ENDPOINT` 非空时，Recall、Remember、BuildContext 各导出一条 OTLP/HTTP JSON span（候选数、命中数、token、耗时、嵌入模型与维度）。默认关闭。导出失败不影响调用，正文不进 span。评测与生产还没有共用的指标或成本核算。
 
 ### 3.5 已落地的最小评测闭环
 
@@ -172,7 +172,7 @@ eval/
 2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。✅ PostgreSQL 在 vector 扩展已经安装且维度一致时，用 HNSW 余弦索引补充稠密候选（`MEMORI_PGVECTOR`，默认 auto）。驱动不安装扩展，schema 仍是版本 5。SQLite 仍是有界扫描；`modernc` 不能加载 `vec0`，默认构建保持纯 Go，没有 cgo。
 3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。✅ `MEMORI_RLS=on` 时 PostgreSQL 对实体、会话、消息、事实和知识图谱边加 `FORCE ROW LEVEL SECURITY`，不进版本化迁移，也不替换应用层键。SQLite 与 MongoDB 不变。超级用户和 `BYPASSRLS` 仍绕过。进程表和图谱词表没有租户列。
-5. **MCP 生产治理**：✅ 静态工具授权、进程内每分钟配额、JSONL 审计（不含记忆正文）。✅ HTTP 可额外校验 HS256 或 RS256 JWT（iss、aud、exp、scope），scope 不能超出静态允许列表。服务不签发令牌，静态 Bearer 仍然有效。配额不跨进程，也没有 OTel。JSONL 审计仍是审计记录。
+5. **MCP 生产治理**：✅ 静态工具授权、进程内每分钟配额、JSONL 审计（不含记忆正文）。✅ HTTP 可额外校验 HS256 或 RS256 JWT（iss、aud、exp、scope），scope 不能超出静态允许列表。服务不签发令牌，静态 Bearer 仍然有效。配额不跨进程。✅ 可选 OTel span 加在 JSONL 之上，不替换它。没有指标，也没有成本核算。
 6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
 7. **本地嵌入/重排**：✅ Ollama `POST /api/embed` 与可选 HTTP rerank（默认关闭）。没有 ONNX，也没有把模型打进二进制；Ollama 需要本机已经拉好模型。
 8. **隐私**：✅ `Export`（版本 1 JSON）与 `DeleteSubject` 硬删除。`MEMORI_PII_REDACT` 默认关闭，只遮邮箱、电话和通过 Luhn 的卡号。不是 crypto-shredding。可选 Postgres RLS 不替代按主体删除。
@@ -321,7 +321,7 @@ memory_stats(entity_id?)
 - 返回结构化 JSON + 文本，引用保留 fact/message id；记忆正文按不可信数据处理。
 - Docker 多阶段镜像与非 root 运行已交付；与 OpenAI-compatible proxy 共用同一 core。
 
-✅ HTTP 资源服务器校验已交付：静态 Bearer 仍可用；HS256 或 RS256 JWT 要匹配 iss、aud、exp，scope 不能超出启动时的允许列表，也不能绕过只读。服务不签发令牌，也不做授权码流程。仍未做：按调用方签发令牌、跨进程配额、OTel。JSONL 审计不含查询和记忆正文。可选 Postgres RLS 不在这条 MCP 路径上，也不替换应用层 org/app。
+✅ HTTP 资源服务器校验已交付：静态 Bearer 仍可用；HS256 或 RS256 JWT 要匹配 iss、aud、exp，scope 不能超出启动时的允许列表，也不能绕过只读。服务不签发令牌，也不做授权码流程。仍未做：按调用方签发令牌、跨进程配额。JSONL 审计不含查询和记忆正文。✅ 可选 OTel span 不在 MCP 进程里单独实现，调用 Recall、Remember、BuildContext 时随库导出，不替换 JSONL。可选 Postgres RLS 不在这条 MCP 路径上，也不替换应用层 org/app。
 
 ### P2：更强的结构（12 周以后，需评测支撑）
 
@@ -373,7 +373,7 @@ memory_stats(entity_id?)
 
 - MCP stdio + Streamable HTTP + Bearer 鉴权已交付（七个工具，含 `memory_rule`、只读、entity 作用域、集成测试）。
 - 应用层 `org_id/app_id`、导出与硬删除已交付。✅ 可选 Postgres RLS 已交付：默认关闭，不替换应用层键，SQLite 与 MongoDB 不变。
-- 静态工具授权、进程内配额与 JSONL 审计已交付。✅ HTTP 可选 JWT 校验已交付，不签发令牌，不替换静态 Bearer。待做：OTel span/metrics 与成本核算。
+- 静态工具授权、进程内配额与 JSONL 审计已交付。✅ HTTP 可选 JWT 校验已交付，不签发令牌，不替换静态 Bearer。✅ 可选 OTel span 已交付，不替换 JSONL。待做：指标与成本核算。
 
 ---
 
