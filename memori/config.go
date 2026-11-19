@@ -40,6 +40,11 @@ type RecallConfig struct {
 	WeightRecency    float64
 	WeightFrequency  float64
 	RecencyHalfLife  time.Duration
+	// Fusion is "weighted" (default) or "rrf". RRF is weighted reciprocal
+	// rank fusion and can be rolled back by setting Fusion to "weighted".
+	Fusion string
+	// RRFK is the reciprocal-rank constant. Zero uses the usual value of 60.
+	RRFK int
 }
 
 // ProfileConfig controls the always-on profile injected independently of the
@@ -140,6 +145,8 @@ func newConfig() *Config {
 			WeightRecency:    envFloat("MEMORI_RECALL_WEIGHT_RECENCY", 0.10),
 			WeightFrequency:  envFloat("MEMORI_RECALL_WEIGHT_FREQUENCY", 0.10),
 			RecencyHalfLife:  envDuration("MEMORI_RECALL_RECENCY_HALF_LIFE", 7*24*time.Hour),
+			Fusion:           normalizeFusion(envString("MEMORI_RECALL_FUSION", "weighted")),
+			RRFK:             envInt("MEMORI_RECALL_RRF_K", 60),
 		},
 		Profile: ProfileConfig{
 			Budget:         envInt("MEMORI_PROFILE_BUDGET", 200),
@@ -167,6 +174,15 @@ func (c *Config) snapshot() configSnapshot {
 		Extraction:    c.Extraction,
 		Recall:        c.Recall,
 		Profile:       c.Profile,
+	}
+}
+
+func normalizeFusion(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "rrf":
+		return "rrf"
+	default:
+		return "weighted"
 	}
 }
 

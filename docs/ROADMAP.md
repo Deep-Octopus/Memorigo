@@ -189,7 +189,7 @@ eval/
 |---|---|---|---|---|
 | P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付） | 5 | 中 | 一条命令产出 accuracy/latency/token/$ 报告；配置哈希可复现 |
 | P0-2 | **ANN 候选 + FTS5/pgvector** | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
-| P0-3 | **RRF / 可选 rerank** | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
+| P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付，`MEMORI_RECALL_FUSION=rrf`，默认可回滚到加权融合；rerank 仍未做） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
 | P0-4 | **时态 v3：valid_from/valid_to + source_message_id** | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
 | P0-5 | **多租户最小闭环** | 5 | 中 | `org_id/app_id` 进入 schema；跨租户泄漏测试为 0 |
 

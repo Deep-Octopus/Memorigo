@@ -183,6 +183,72 @@ func TestMiddleOrderFactsKeepsStrongestAtEdges(t *testing.T) {
 	}
 }
 
+func TestRankFactsRRFPromotesExactLexicalMatch(t *testing.T) {
+	now := time.Now()
+	// Fact 1 is an exact lexical hit with only a weak dense score.
+	// Fact 2 is a strong dense hit with no shared tokens.
+	// Weighted fusion follows the dense score. RRF keeps the exact hit on top
+	// because it is rank-1 in the lexical list and still present in dense.
+	lexical := storage.FactResult{
+		ID:           1,
+		Content:      "alpha signal zebra",
+		Embedding:    []float32{0.2, 1},
+		NumTimes:     1,
+		DateLastTime: now.Add(-time.Hour),
+	}
+	dense := storage.FactResult{
+		ID:           2,
+		Content:      "unrelated weather report",
+		Embedding:    []float32{1, 0},
+		NumTimes:     1,
+		DateLastTime: now,
+	}
+	query := "alpha signal zebra"
+	queryVec := []float32{1, 0}
+	base := RecallConfig{
+		MinScore:         0,
+		MinSimilarity:    0.1,
+		WeightSimilarity: 0.85,
+		WeightLexical:    0.15,
+		WeightRecency:    0,
+		WeightFrequency:  0,
+		RecencyHalfLife:  7 * 24 * time.Hour,
+		RRFK:             60,
+	}
+
+	weighted := base
+	weighted.Fusion = "weighted"
+	rankedW := rankFacts(query, queryVec, []storage.FactResult{lexical, dense}, weighted, now)
+	if len(rankedW) == 0 || rankedW[0].fact.ID != 2 {
+		t.Fatalf("weighted fusion should follow dense similarity, got %#v", rankedW)
+	}
+
+	rrf := base
+	rrf.Fusion = "rrf"
+	rankedR := rankFacts(query, queryVec, []storage.FactResult{lexical, dense}, rrf, now)
+	if len(rankedR) == 0 || rankedR[0].fact.ID != 1 {
+		t.Fatalf("rrf should promote the exact lexical match, got %#v", rankedR)
+	}
+}
+
+func TestRankFactsRRFEmptyQueryStaysRecencyOrdered(t *testing.T) {
+	now := time.Now()
+	older := storage.FactResult{ID: 1, Content: "one", NumTimes: 1, DateLastTime: now.Add(-48 * time.Hour)}
+	newer := storage.FactResult{ID: 2, Content: "two", NumTimes: 1, DateLastTime: now}
+	ranked := rankFacts("", nil, []storage.FactResult{older, newer}, RecallConfig{
+		Fusion:           "rrf",
+		MinScore:         0,
+		WeightSimilarity: 0.6,
+		WeightLexical:    0.2,
+		WeightRecency:    0.1,
+		WeightFrequency:  0.1,
+		RecencyHalfLife:  7 * 24 * time.Hour,
+	}, now)
+	if len(ranked) != 2 || ranked[0].fact.ID != 2 {
+		t.Fatalf("empty query should stay recency ordered, got %#v", ranked)
+	}
+}
+
 func TestFactsFromRankedPreservesScores(t *testing.T) {
 	ranked := []rankedFact{{
 		fact:       makeFact(t, 7, "My favorite color is blue", 2, time.Hour),

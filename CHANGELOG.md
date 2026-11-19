@@ -8,6 +8,7 @@ All notable changes to Memorigo are documented here. The format follows
 
 ### Added
 
+- **Reciprocal rank fusion** (`MEMORI_RECALL_FUSION=rrf`): an optional alternative to linear hybrid weights. A fact that is best on one signal (typically an exact name or identifier) is no longer buried by a mediocre dense score. `MEMORI_RECALL_FUSION=weighted` restores the previous ranking. Scores stay in `[0, 1]`, so `MinScore` means the same thing in both modes.
 - **Always-on profile** (`Memori.Profile`): a small, query-independent
   `<memory_profile>` built from active facts and grouped into Identity,
   Preferences, Health, Skills and optional dynamic sections. Static facts are

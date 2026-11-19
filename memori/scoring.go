@@ -3,6 +3,7 @@ package memori
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Deep-Octopus/Memorigo/embed"
@@ -28,10 +29,22 @@ const (
 // repeated-mention frequency. Hybrid scoring is important because offline hash
 // embeddings are lexical by nature, while API embeddings can miss exact names
 // and identifiers that BM25 catches.
+//
+// Fusion "weighted" (the default) mixes normalized signals with a linear
+// combination. Fusion "rrf" uses weighted reciprocal rank fusion so a fact
+// that is best on one signal is not buried by a mediocre score on another.
+// An empty query always uses the weighted path and means "latest facts".
 func rankFacts(query string, queryEmbedding []float32, facts []storage.FactResult, cfg RecallConfig, now time.Time) []rankedFact {
 	if len(facts) == 0 {
 		return nil
 	}
+	if cfg.useRRF() && strings.TrimSpace(query) != "" {
+		return rankFactsRRF(query, queryEmbedding, facts, cfg, now)
+	}
+	return rankFactsWeighted(query, queryEmbedding, facts, cfg, now)
+}
+
+func rankFactsWeighted(query string, queryEmbedding []float32, facts []storage.FactResult, cfg RecallConfig, now time.Time) []rankedFact {
 
 	wSim, wLex, wRec, wFreq := normalizedWeights(cfg)
 	halfLife := cfg.RecencyHalfLife
@@ -116,6 +129,167 @@ func rankFacts(query string, queryEmbedding []float32, facts []storage.FactResul
 		return a.fact.ID > b.fact.ID
 	})
 	return out
+}
+
+// rankFactsRRF fuses per-signal rankings with weighted reciprocal rank fusion:
+//
+//	score(d) = Σ_r  weight_r / (k + rank_r(d))
+//
+// The score is then divided by the best possible score so it stays in [0, 1]
+// and MinScore keeps the same meaning as weighted fusion. A signal with a
+// zero weight is left out of the fusion. Facts that fail the relevance gate
+// never enter a ranking.
+func rankFactsRRF(query string, queryEmbedding []float32, facts []storage.FactResult, cfg RecallConfig, now time.Time) []rankedFact {
+	wSim, wLex, wRec, wFreq := normalizedWeights(cfg)
+	halfLife := cfg.RecencyHalfLife
+	if halfLife <= 0 {
+		halfLife = 7 * 24 * time.Hour
+	}
+	minSimilarity := cfg.MinSimilarity
+	if minSimilarity < 0 {
+		minSimilarity = 0
+	}
+	k := float64(cfg.RRFK)
+	if k <= 0 {
+		k = 60
+	}
+
+	queryTokens := uniqueStrings(textutil.Tokenize(query))
+	lexicalScores, _ := bm25Scores(queryTokens, facts)
+
+	maxLogFreq := 0.0
+	for _, f := range facts {
+		if v := math.Log1p(float64(f.NumTimes)); v > maxLogFreq {
+			maxLogFreq = v
+		}
+	}
+
+	type item struct {
+		fact   storage.FactResult
+		sim    float64
+		lexRaw float64
+		lex    float64
+		rec    float64
+		freq   float64
+	}
+	items := make([]item, 0, len(facts))
+	maxLexical := 0.0
+	for _, raw := range lexicalScores {
+		if raw > maxLexical {
+			maxLexical = raw
+		}
+	}
+	for i, f := range facts {
+		sim := 0.0
+		if len(queryEmbedding) > 0 && len(queryEmbedding) == len(f.Embedding) {
+			sim = embed.CosineSimilarity(queryEmbedding, f.Embedding)
+			if sim < 0 {
+				sim = 0
+			}
+		}
+		lexRaw := lexicalScores[i]
+		if len(queryTokens) > 0 && lexRaw == 0 && sim < minSimilarity {
+			continue
+		}
+		lex := 0.0
+		if maxLexical > 0 {
+			lex = lexRaw / maxLexical
+		}
+		recency := 0.0
+		if !f.DateLastTime.IsZero() {
+			age := now.Sub(f.DateLastTime)
+			if age < 0 {
+				age = 0
+			}
+			recency = math.Exp(-math.Ln2 * age.Hours() / halfLife.Hours())
+		}
+		frequency := 0.0
+		if maxLogFreq > 0 {
+			frequency = math.Log1p(float64(f.NumTimes)) / maxLogFreq
+		}
+		items = append(items, item{
+			fact: f, sim: sim, lexRaw: lexRaw, lex: lex, rec: recency, freq: frequency,
+		})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	raw := make([]float64, len(items))
+	addRanking := func(weight float64, value func(item) float64) {
+		if weight <= 0 {
+			return
+		}
+		order := make([]int, 0, len(items))
+		for i, it := range items {
+			if value(it) <= 0 {
+				continue
+			}
+			order = append(order, i)
+		}
+		sort.SliceStable(order, func(a, b int) bool {
+			ia, ib := order[a], order[b]
+			va, vb := value(items[ia]), value(items[ib])
+			if va != vb {
+				return va > vb
+			}
+			if !items[ia].fact.DateLastTime.Equal(items[ib].fact.DateLastTime) {
+				return items[ia].fact.DateLastTime.After(items[ib].fact.DateLastTime)
+			}
+			return items[ia].fact.ID > items[ib].fact.ID
+		})
+		for rank, idx := range order {
+			raw[idx] += weight / (k + float64(rank+1))
+		}
+	}
+	addRanking(wSim, func(it item) float64 { return it.sim })
+	addRanking(wLex, func(it item) float64 { return it.lexRaw })
+	addRanking(wRec, func(it item) float64 { return it.rec })
+	addRanking(wFreq, func(it item) float64 { return it.freq })
+
+	best := 0.0
+	for _, w := range []float64{wSim, wLex, wRec, wFreq} {
+		if w > 0 {
+			best += w / (k + 1)
+		}
+	}
+	if best <= 0 {
+		return nil
+	}
+
+	out := make([]rankedFact, 0, len(items))
+	for i, it := range items {
+		score := raw[i] / best
+		if score < cfg.MinScore {
+			continue
+		}
+		out = append(out, rankedFact{
+			fact:       it.fact,
+			score:      score,
+			similarity: it.sim,
+			lexical:    it.lex,
+			recency:    it.rec,
+			frequency:  it.freq,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if !a.fact.DateLastTime.Equal(b.fact.DateLastTime) {
+			return a.fact.DateLastTime.After(b.fact.DateLastTime)
+		}
+		if a.fact.NumTimes != b.fact.NumTimes {
+			return a.fact.NumTimes > b.fact.NumTimes
+		}
+		return a.fact.ID > b.fact.ID
+	})
+	return out
+}
+
+func (cfg RecallConfig) useRRF() bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.Fusion), "rrf")
 }
 
 func normalizedWeights(cfg RecallConfig) (sim, lex, rec, freq float64) {
