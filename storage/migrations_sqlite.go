@@ -165,4 +165,28 @@ var sqliteMigrations = map[int][]string{
 		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_slot
 			ON memori_entity_fact (entity_id, slot)`,
 	},
+	3: {
+		// Lexical candidate index. search_text stores the same tokens the
+		// recall ranker uses (Latin words + CJK bigrams). FTS5 is external
+		// content so the source of truth stays on the fact row. modernc
+		// sqlite cannot load vec0, so dense search stays a bounded scan.
+		`ALTER TABLE memori_entity_fact ADD COLUMN search_text TEXT NOT NULL DEFAULT ''`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS memori_fact_fts USING fts5(
+			search_text,
+			content='memori_entity_fact',
+			content_rowid='id',
+			tokenize='unicode61'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS memori_fact_fts_ai AFTER INSERT ON memori_entity_fact BEGIN
+			INSERT INTO memori_fact_fts(rowid, search_text) VALUES (new.id, new.search_text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS memori_fact_fts_ad AFTER DELETE ON memori_entity_fact BEGIN
+			INSERT INTO memori_fact_fts(memori_fact_fts, rowid, search_text) VALUES ('delete', old.id, old.search_text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS memori_fact_fts_au AFTER UPDATE OF search_text ON memori_entity_fact BEGIN
+			INSERT INTO memori_fact_fts(memori_fact_fts, rowid, search_text) VALUES ('delete', old.id, old.search_text);
+			INSERT INTO memori_fact_fts(rowid, search_text) VALUES (new.id, new.search_text);
+		END`,
+		`INSERT INTO memori_fact_fts(memori_fact_fts) VALUES('rebuild')`,
+	},
 }

@@ -72,7 +72,7 @@ flowchart TB
 | 写路径 | `memori/writer.go` | 解析身份、事务写入、历史去重、提交后入队 |
 | 增强 | `memori/augmentation.go` | 有界队列、worker、重试、抽取、嵌入、冲突消解、摘要 |
 | 抽取 | `memori/extractor.go` | 启发式（中英）与 LLM 严格 JSON 两种实现 |
-| 排序 | `memori/scoring.go` | BM25、余弦、新近度、频率、闸门、权重归一化 |
+| 排序 | `memori/scoring.go` | BM25、余弦、新近度、频率、闸门、加权融合或 RRF |
 | 上下文 | `memori/context.go` / `memori/profile.go` | Profile + 事实 + 原始消息三通道、MMR、token 预算、覆盖率、引用、裁剪 |
 | 注入 | `memori/memory_prompt.go` | 查询提取、`BuildContext`、模板渲染、消息插入 |
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |

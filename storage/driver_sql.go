@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+
+	"github.com/Deep-Octopus/Memorigo/textutil"
 )
 
 type SQLDriver struct {
@@ -75,7 +77,7 @@ func (d *SQLDriver) Migrate() error {
 	currentVersion := d.getSchemaVersion()
 	maxVersion := maxSQLMigrationVersion(migrations)
 	if currentVersion >= maxVersion {
-		return nil
+		return d.backfillSearchText()
 	}
 
 	tx, err := d.a.DB.Begin()
@@ -107,6 +109,62 @@ func (d *SQLDriver) Migrate() error {
 		currentVersion = v
 	}
 
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return d.backfillSearchText()
+}
+
+// backfillSearchText fills the lexical document for rows written before the
+// search column existed. Rows that already have a document are skipped.
+// SQLite triggers mirror the column into FTS5 when it changes.
+func (d *SQLDriver) backfillSearchText() error {
+	rows, err := d.a.DB.Query(`SELECT id, content FROM memori_entity_fact WHERE search_text = ''`)
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		id      int64
+		content string
+	}
+	var batch []pending
+	for rows.Next() {
+		var row pending
+		if err := rows.Scan(&row.id, &row.content); err != nil {
+			rows.Close()
+			return err
+		}
+		batch = append(batch, row)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+
+	tx, err := d.a.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt := fmt.Sprintf(
+		`UPDATE memori_entity_fact SET search_text = %s WHERE id = %s AND search_text = ''`,
+		sqlPlaceholder(d.dialect, 1), sqlPlaceholder(d.dialect, 2),
+	)
+	for _, row := range batch {
+		doc := textutil.SearchDocument(row.content)
+		if doc == "" {
+			doc = " "
+		}
+		if _, err := tx.Exec(stmt, doc, row.id); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 

@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/Deep-Octopus/Memorigo/textutil"
 )
 
 // sqlQuerier is implemented by *sql.DB and *sql.Tx so every repository can run
@@ -310,8 +313,8 @@ func (r *sqlEntityFactRepo) Upsert(ctx context.Context, entityID int64, in FactI
 	query := fmt.Sprintf(`
 INSERT INTO memori_entity_fact
  (uuid, entity_id, content, content_embedding, num_times, date_last_time,
-  uniq, slot, embedding_model, embedding_dim, source_conversation_id, status, date_created)
-VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s)
+  uniq, slot, embedding_model, embedding_dim, source_conversation_id, status, date_created, search_text)
+VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
 ON CONFLICT(entity_id, uniq) DO UPDATE SET
  content = excluded.content,
  content_embedding = excluded.content_embedding,
@@ -322,13 +325,14 @@ ON CONFLICT(entity_id, uniq) DO UPDATE SET
  embedding_model = excluded.embedding_model,
  embedding_dim = excluded.embedding_dim,
  source_conversation_id = COALESCE(excluded.source_conversation_id, memori_entity_fact.source_conversation_id),
+ search_text = excluded.search_text,
  status = CASE
    WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND %s
    THEN memori_entity_fact.status
    ELSE 'active'
  END
 RETURNING id`,
-		ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12),
+		ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13),
 	)
 
 	var id int64
@@ -336,7 +340,7 @@ RETURNING id`,
 	err := r.q.QueryRowContext(ctx, query,
 		uuid.New().String(), entityID, in.Content, in.Embedding,
 		now, in.Uniq, in.Slot, in.EmbeddingModel, in.EmbeddingDim,
-		nullableInt64(in.SourceConversationID), now, in.PreserveInactive,
+		nullableInt64(in.SourceConversationID), now, storedSearchText(in.Content), in.PreserveInactive,
 	).Scan(&id)
 	return id, err
 }
@@ -431,6 +435,100 @@ LIMIT %s`, sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2))
 		return nil, err
 	}
 	return r.scanFacts(rows)
+}
+
+func (r *sqlEntityFactRepo) SearchLexical(ctx context.Context, entityID int64, query string, limit int) ([]FactResult, error) {
+	if limit <= 0 {
+		limit = 150
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	switch r.dialect {
+	case "postgres":
+		match, ok := postgresOrQuery(query)
+		if !ok {
+			return nil, nil
+		}
+		stmt := fmt.Sprintf(`
+SELECT id, content, content_embedding, num_times, date_last_time,
+       COALESCE(slot, ''), COALESCE(embedding_dim, 0), COALESCE(embedding_model, ''),
+       source_conversation_id
+FROM memori_entity_fact
+WHERE entity_id = %s AND status = 'active'
+  AND to_tsvector('simple', search_text) @@ to_tsquery('simple', %s)
+ORDER BY ts_rank(to_tsvector('simple', search_text), to_tsquery('simple', %s)) DESC, id DESC
+LIMIT %s`,
+			sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2),
+			sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+		)
+		// PostgreSQL allows a placeholder to be reused. SQLite does not, and
+		// this branch never runs there.
+		rows, err := r.q.QueryContext(ctx, stmt, entityID, match, limit)
+		if err != nil {
+			return nil, err
+		}
+		return r.scanFacts(rows)
+	default:
+		match, ok := sqliteOrQuery(query)
+		if !ok {
+			return nil, nil
+		}
+		stmt := fmt.Sprintf(`
+SELECT f.id, f.content, f.content_embedding, f.num_times, f.date_last_time,
+       COALESCE(f.slot, ''), COALESCE(f.embedding_dim, 0), COALESCE(f.embedding_model, ''),
+       f.source_conversation_id
+FROM memori_fact_fts
+JOIN memori_entity_fact f ON f.id = memori_fact_fts.rowid
+WHERE memori_fact_fts MATCH %s AND f.entity_id = %s AND f.status = 'active'
+ORDER BY bm25(memori_fact_fts), f.id DESC
+LIMIT %s`,
+			sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+		)
+		rows, err := r.q.QueryContext(ctx, stmt, match, entityID, limit)
+		if err != nil {
+			return nil, err
+		}
+		return r.scanFacts(rows)
+	}
+}
+
+func storedSearchText(content string) string {
+	doc := textutil.SearchDocument(content)
+	if doc == "" {
+		return " "
+	}
+	return doc
+}
+
+func sqliteOrQuery(query string) (string, bool) {
+	tokens := textutil.SearchTokens(query)
+	if len(tokens) == 0 {
+		return "", false
+	}
+	if len(tokens) > 32 {
+		tokens = tokens[:32]
+	}
+	parts := make([]string, len(tokens))
+	for i, token := range tokens {
+		parts[i] = `"` + strings.ReplaceAll(token, `"`, `""`) + `"`
+	}
+	return strings.Join(parts, " OR "), true
+}
+
+func postgresOrQuery(query string) (string, bool) {
+	tokens := textutil.SearchTokens(query)
+	if len(tokens) == 0 {
+		return "", false
+	}
+	if len(tokens) > 32 {
+		tokens = tokens[:32]
+	}
+	parts := make([]string, len(tokens))
+	for i, token := range tokens {
+		parts[i] = "'" + strings.ReplaceAll(token, "'", "''") + "'"
+	}
+	return strings.Join(parts, " | "), true
 }
 
 func (r *sqlEntityFactRepo) List(ctx context.Context, entityID int64, limit int) ([]FactResult, error) {

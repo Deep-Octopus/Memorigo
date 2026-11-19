@@ -33,6 +33,7 @@ type ExtractionConfig struct {
 // RecallConfig controls candidate scanning and hybrid ranking.
 type RecallConfig struct {
 	ScanLimit        int
+	LexicalLimit     int
 	MinScore         float64
 	MinSimilarity    float64
 	WeightSimilarity float64
@@ -138,6 +139,7 @@ func newConfig() *Config {
 		},
 		Recall: RecallConfig{
 			ScanLimit:        envInt("MEMORI_RECALL_SCAN_LIMIT", 2000),
+			LexicalLimit:     envInt("MEMORI_RECALL_LEXICAL_LIMIT", 150),
 			MinScore:         envFloat("MEMORI_RECALL_MIN_SCORE", 0.05),
 			MinSimilarity:    envFloat("MEMORI_RECALL_MIN_SIMILARITY", 0.10),
 			WeightSimilarity: envFloat("MEMORI_RECALL_WEIGHT_SIMILARITY", 0.60),

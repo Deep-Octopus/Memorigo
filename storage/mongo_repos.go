@@ -9,6 +9,8 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/Deep-Octopus/Memorigo/textutil"
 )
 
 func mongoOpCtx(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -389,6 +391,7 @@ func (r *mongoEntityFactRepo) Upsert(ctx context.Context, entityID int64, in Fac
 		"slot":              in.Slot,
 		"embedding_model":   in.EmbeddingModel,
 		"embedding_dim":     in.EmbeddingDim,
+		"search_tokens":     textutil.SearchTokens(in.Content),
 	}
 	if !in.PreserveInactive {
 		set["status"] = "active"
@@ -537,6 +540,30 @@ func (r *mongoEntityFactRepo) findFacts(ctx context.Context, filter bson.M, limi
 		return nil, err
 	}
 	return out, nil
+}
+
+func (r *mongoEntityFactRepo) SearchLexical(ctx context.Context, entityID int64, query string, limit int) ([]FactResult, error) {
+	tokens := textutil.SearchTokens(query)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	if len(tokens) > 32 {
+		tokens = tokens[:32]
+	}
+	if limit <= 0 {
+		limit = 150
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	filter := bson.M{
+		"entity_id":     entityID,
+		"search_tokens": bson.M{"$in": tokens},
+	}
+	for k, v := range mongoActiveFilter() {
+		filter[k] = v
+	}
+	return r.findFacts(ctx, filter, limit, bson.D{{Key: "date_last_time", Value: -1}, {Key: "id", Value: -1}})
 }
 
 func (r *mongoEntityFactRepo) Candidates(ctx context.Context, entityID int64, scanLimit int) ([]FactResult, error) {

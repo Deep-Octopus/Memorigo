@@ -161,4 +161,9 @@ var postgresMigrations = map[int][]string{
 		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_entity_slot
 			ON memori_entity_fact (entity_id, slot)`,
 	},
+	3: {
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_search
+			ON memori_entity_fact USING GIN (to_tsvector('simple', search_text))`,
+	},
 }

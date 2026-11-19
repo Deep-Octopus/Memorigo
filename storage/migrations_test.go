@@ -32,7 +32,7 @@ func TestSQLMigrationUpgradesVersion1(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := mgr.Build(); err != nil {
-		t.Fatalf("migrate v1 -> v2: %v", err)
+		t.Fatalf("migrate v1 -> current: %v", err)
 	}
 	if err := mgr.Build(); err != nil {
 		t.Fatalf("migrate should be idempotent: %v", err)
@@ -42,17 +42,24 @@ func TestSQLMigrationUpgradesVersion1(t *testing.T) {
 	if err := db.QueryRow("SELECT num FROM memori_schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("schema version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("schema version = %d, want 3", version)
 	}
 
 	columns := sqliteColumns(t, db, "memori_entity_fact")
 	for _, want := range []string{
-		"slot", "status", "embedding_model", "embedding_dim", "source_conversation_id",
+		"slot", "status", "embedding_model", "embedding_dim", "source_conversation_id", "search_text",
 	} {
 		if _, ok := columns[want]; !ok {
 			t.Errorf("missing column %q after migration", want)
 		}
+	}
+	var fts int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memori_fact_fts'`).Scan(&fts); err != nil {
+		t.Fatal(err)
+	}
+	if fts != 1 {
+		t.Fatal("fts table was not created")
 	}
 }
 

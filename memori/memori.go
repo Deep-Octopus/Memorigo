@@ -340,12 +340,50 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(query) != "" {
+		lexicalLimit := snap.Recall.LexicalLimit
+		if lexicalLimit <= 0 {
+			lexicalLimit = 150
+		}
+		lexical, lexErr := repos.EntityFact().SearchLexical(ctx, entityID, query, lexicalLimit)
+		if lexErr != nil {
+			// The recency window still ranks. A missing index must not fail recall.
+			m.logger.Warn("lexical candidate search failed", "error", lexErr)
+		} else {
+			candidates = mergeFactResults(candidates, lexical)
+		}
+	}
 
 	ranked := rankFacts(query, queryEmbedding, candidates, snap.Recall, time.Now())
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
 	return ranked, nil
+}
+
+// mergeFactResults appends lexical hits that were not already in the recency
+// window. The first slice keeps its order so an empty query stays recency-first.
+func mergeFactResults(base, extra []storage.FactResult) []storage.FactResult {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[int64]struct{}, len(base)+len(extra))
+	out := make([]storage.FactResult, 0, len(base)+len(extra))
+	for _, fact := range base {
+		if _, ok := seen[fact.ID]; ok {
+			continue
+		}
+		seen[fact.ID] = struct{}{}
+		out = append(out, fact)
+	}
+	for _, fact := range extra {
+		if _, ok := seen[fact.ID]; ok {
+			continue
+		}
+		seen[fact.ID] = struct{}{}
+		out = append(out, fact)
+	}
+	return out
 }
 
 // MemoryContext recalls relevant facts and renders them with the configured

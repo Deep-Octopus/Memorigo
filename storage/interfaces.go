@@ -126,6 +126,10 @@ type EntityFactRepo interface {
 	// Candidates returns active facts for an entity, newest first, capped at
 	// scanLimit. Recall performs hybrid scoring on this candidate set.
 	Candidates(ctx context.Context, entityID int64, scanLimit int) ([]FactResult, error)
+	// SearchLexical returns active facts whose indexed tokens overlap the
+	// query. It is a candidate generator for facts that have fallen outside
+	// the recency scan window. An empty result is not an error.
+	SearchLexical(ctx context.Context, entityID int64, query string, limit int) ([]FactResult, error)
 	// List returns active facts ordered by recency and frequency.
 	List(ctx context.Context, entityID int64, limit int) ([]FactResult, error)
 	// Forget soft-deletes a fact (status=deleted) so it is excluded from recall.

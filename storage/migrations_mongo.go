@@ -154,6 +154,12 @@ var mongoMigrations = map[int][]mongoMigrationOp{
 			Options: options.Index().SetName("idx_memori_entity_fact_entity_slot"),
 		}},
 	},
+	3: {
+		{"memori_entity_fact", mongo.IndexModel{
+			Keys:    bson.D{{Key: "entity_id", Value: 1}, {Key: "search_tokens", Value: 1}},
+			Options: options.Index().SetName("idx_memori_entity_fact_search_tokens"),
+		}},
+	},
 }
 
 func maxMongoMigrationVersion(migrations map[int][]mongoMigrationOp) int {
