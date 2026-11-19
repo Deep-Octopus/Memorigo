@@ -202,6 +202,76 @@ func Builtin() []Scenario {
 				},
 			}},
 		},
+		{
+			Name:        "profile-context",
+			Description: "The always-on profile supplies stable identity and preferences; dynamic focus facts are opt-in.",
+			Seed: func(_ context.Context, m *memori.Memori) error {
+				for _, fact := range []string{
+					"My name is Alice",
+					"I live in Shanghai",
+					"My favorite color is blue",
+					"Please remember that my current focus is the Memorigo launch",
+				} {
+					if _, err := m.Remember(fact); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Queries: []QueryCase{
+				{
+					Query: "Who am I?",
+					Context: &ContextCheck{
+						Budget:         500,
+						IncludeProfile: true,
+						WantText:       []string{"<memory_profile>", "Alice"},
+						WantProfile:    []string{"Alice", "Shanghai", "blue"},
+						AvoidProfile:   []string{"Memorigo launch"},
+						MaxTokens:      500,
+					},
+				},
+				{
+					Query: "current focus",
+					Context: &ContextCheck{
+						Budget:                500,
+						IncludeProfile:        true,
+						IncludeDynamicProfile: true,
+						WantProfile:           []string{"Memorigo launch"},
+						MaxTokens:             500,
+					},
+				},
+			},
+		},
+		{
+			Name:         "context-abstention",
+			Description:  "An explicit coverage floor marks a package insufficient when the query is unsupported.",
+			NoExtraction: true,
+			Seed: func(_ context.Context, m *memori.Memori) error {
+				_, err := m.Remember("My name is Alice")
+				return err
+			},
+			Queries: []QueryCase{
+				{
+					Query: "quantum flux capacitor",
+					Context: &ContextCheck{
+						Budget:           300,
+						MinCoverage:      0.9,
+						WantInsufficient: true,
+						MaxTokens:        300,
+					},
+				},
+				{
+					Query: "what is my name",
+					Context: &ContextCheck{
+						Budget:      300,
+						FactLimit:   5,
+						MinCoverage: 0.5,
+						WantText:    []string{"Alice"},
+						MaxTokens:   300,
+					},
+				},
+			},
+		},
 	}
 }
 

@@ -73,7 +73,7 @@ flowchart TB
 | 增强 | `memori/augmentation.go` | 有界队列、worker、重试、抽取、嵌入、冲突消解、摘要 |
 | 抽取 | `memori/extractor.go` | 启发式（中英）与 LLM 严格 JSON 两种实现 |
 | 排序 | `memori/scoring.go` | BM25、余弦、新近度、频率、闸门、权重归一化 |
-| 上下文 | `memori/context.go` | 事实 + 原始消息双通道、token 预算、引用、裁剪 |
+| 上下文 | `memori/context.go` / `memori/profile.go` | Profile + 事实 + 原始消息三通道、MMR、token 预算、覆盖率、引用、裁剪 |
 | 注入 | `memori/memory_prompt.go` | 查询提取、`BuildContext`、模板渲染、消息插入 |
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |
 | 嵌入 | `embed/` | hash / OpenAI / 硅基流动、LRU、HTTP 重试 |
@@ -301,39 +301,49 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 `prepareMessages` 只取最后一条 user 消息作为查询，截断到 2000 字符：
 
 1. 若关闭注入、未归因、或调用方已包含记忆标记 → 原样返回。
-2. `BuildContext` 在 `ContextBudget`（默认 800 token）内组装事实块；失败只记录 warning，不阻断 LLM 调用。
-3. `renderMemoryBlock` 替换 `{{facts}}`，末尾追加 `<!-- memorigo:memory -->`。
+2. `BuildContext` 在 `ContextBudget`（默认 800 token）内组装 Profile + 事实块；失败只记录 warning，不阻断 LLM 调用。
+3. `renderPackageBlock` 替换 `{{profile}}` / `{{facts}}`，末尾追加 `<!-- memorigo:memory -->`。自定义旧模板没有 `{{profile}}` 时，Profile 自动前置到 `{{facts}}`。
 4. 插入到开头连续 system 消息之后。
 5. 原始 messages 单独保存，供持久化使用。
 
 ### 7.5 上下文组装
 
-`BuildContext(ctx, query, opts)` 是召回结果进入 prompt 前的最后一层。它同时解决两个问题：注入 token 不可控，以及抽取丢失证据后无法兜底。
+`BuildContext(ctx, query, opts)` 是记忆进入 prompt 前的最后一层。v2 同时解决四个问题：注入 token 不可控、抽取丢失证据、预算被近重复事实占满、以及模型对上下文中段不敏感。
 
-**输入**
+**三条通道**
 
-- 事实通道：`Recall(query, factLimit)`，沿用混合打分与闸门。
-- 证据通道（可选）：`MessageRepo.RecentForEntity(entityID, rawScan)`，按 session → conversation → message 反查同一 entity 的跨 session 原始消息。
-- `TokenBudget` / `FactLimit` / `RawLimit` / `RawScan`；零值分别回落到 `MEMORI_CONTEXT_BUDGET`、召回上限、4、200。
+- **Profile**（可选）：`profileForEntity` 从活跃事实按 slot 归类，生成查询无关的 `<memory_profile>`；静态分组（Identity / Preferences / Health / Skills）默认开启，动态分组（Current focus / Opinions / Recent context）需要 `IncludeDynamicProfile`，且只保留 90 天内有更新的事实。
+- **查询事实**：`recallRanked` 返回 `FactLimit × 4`（上限 200）的候选池，沿用混合打分与闸门。
+- **原始证据**（可选）：`MessageRepo.RecentForEntity(entityID, rawScan)`，按 session → conversation → message 反查同一 entity 的跨 session 原始消息。
+
+**选择**
+
+1. Profile 预算先被限制在总预算的 1/3；查询事实仍按混合分排序。
+2. MMR（最大边际相关性）从候选池选 `FactLimit` 条：
+   `pick = argmax(lambda * relevance - (1-lambda) * max_similarity_to_selected)`。
+   默认 `lambda=0.7`；相似度优先用稠密余弦，缺失时回退 token Jaccard。
+3. Profile 与查询事实按 id + 内容 key 去重；原始消息与事实内容去重。
+4. `Coverage` 计算查询词元被证据覆盖的比例；`MinCoverage > 0` 且低于阈值时 `InsufficientEvidence=true`。
 
 **预算与顺序**
 
 1. 先写 `<memory_context>` 头与安全声明，预留固定开销。
-2. 按召回顺序打包事实行：`- [fact:<id>] <content>`。单行超长时用 `TruncateToTokens` 裁剪。
-3. `IncludeRaw` 时对原始消息按“查询词元重叠 + 7 天新近度”排序、去重；全部无重叠时退回最近消息。
-4. 原始消息填充剩余预算：`- [msg:<id>] <role>: <content>`。
-5. 任一条目放不下即停止，并置 `Truncated=true`；最终 `Tokens <= Budget`。
+2. 打包 Profile 文本（已在自己的预算内渲染）。
+3. 按 MMR 选择结果打包事实行：`- [fact:<id>] <content>`。单行超长时用 `TruncateToTokens` 裁剪。
+4. `IncludeRaw` 时对原始消息按“查询词元重叠 + 7 天新近度”排序；并在事实打包时预留剩余预算的 25%（`RawBudgetShare`，clamp 到 10%–50%）给证据通道。
+5. 渲染顺序做 lost-in-the-middle 重排：最强事实第一、第二强最后、其余向中间填；结构化 `Facts` 仍按分数排序。
+6. 任一条目放不下即停止，并置 `Truncated=true`；最终 `Tokens <= Budget`。
 
 **引用**
 
 `ContextCitation{Ref, Kind, ID, ConversationID, Score}`：
 
-- `Kind=fact`：`ID` 是事实 id，可继续 `Forget` / 审计。
+- `Kind=fact`：`ID` 是事实 id，可继续 `Forget` / 审计；Profile 事实同样产生 `fact:` 引用。
 - `Kind=message`：`ID` 是消息 id，`ConversationID` 指向来源会话，可回链原文。
 
 估算器在 `textutil.EstimateTokens`：CJK 字符 1 token，拉丁文约 4 字符 1 token，空白不计。它只用于本地裁剪，不承诺与任何厂商 tokenizer 完全一致；预算应留有余量。
 
-**为什么先事实、后原文**：事实是高信号压缩视图，应优先占用预算；原始消息是证据通道，用于抵消抽取遗漏（memory tax）。两条通道都只读，不写消息表，因此不会把注入内容当成用户原话。
+**为什么先 Profile、再事实、后原文**：Profile 是每轮都需要的稳定背景；事实是高信号压缩视图；原始消息是证据通道，用于抵消抽取遗漏（memory tax）。原始证据预留预算，避免长事实把它完全挤掉。三条通道都只读，不写消息表，因此不会把注入内容当成用户原话。
 
 ### 7.6 MCP 适配
 
@@ -342,10 +352,10 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 | 工具 | 调用 |
 |---|---|
 | `memory_search` | `Recall(query, limit)` |
-| `memory_context` | `BuildContext(query, options)` |
+| `memory_context` | `BuildContext(query, options)`；Profile 默认开启，可关 |
 | `memory_remember` | `Remember(content)` |
 | `memory_forget` | `Forget(id)` |
-| `memory_profile` | `Facts(limit)` |
+| `memory_profile` | `Profile(options)`；返回分组 sections + 渲染文本 |
 | `memory_stats` | `Stats(ctx)` |
 
 实现约束：
@@ -410,9 +420,9 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 | 单元 | textutil、embed、scoring、extractor、writer 去重、config |
 | 集成（SQLite） | 写入→增强→召回、slot 覆盖、Forget、隔离、摘要、Reindex、Close |
 | 协议（httptest） | 自动注入、禁用注入、流式持久化、LLM 抽取 JSON |
-| 上下文 | 预算裁剪、事实/消息引用、跨 session 证据、无归因失败 |
-| MCP | in-memory + HTTP transport：工具读写、只读、entity 隔离、Bearer 鉴权、健康检查、工具发现 |
-| 评测 | `eval/` 11 个确定性场景，内存 SQLite + hash 嵌入，CI 无 API key |
+| 上下文 | 预算裁剪、事实/消息引用、跨 session 证据、Profile 去重、MMR、覆盖率弃权、无归因失败 |
+| MCP | in-memory + HTTP transport：工具读写、只读、entity 隔离、Bearer 鉴权、健康检查、工具发现、Profile 默认注入 |
+| 评测 | `eval/` 15 个确定性场景，内存 SQLite + hash 嵌入，CI 无 API key |
 | 竞态 | `go test -race ./...` |
 
 确定性回归不依赖 LLM；LLM 相关测试使用本地 mock server。CI 在 `go test -race` 之后运行 `go run ./cmd/memorigo-eval`，任何场景退化都会失败。
@@ -422,6 +432,8 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - 事实召回、偏好覆盖、搬家覆盖、跨 session 连续、遗忘、噪声抵抗、中文召回。
 - token 预算：文本包含引用，且 `Tokens <= Budget`。
 - 原始证据：关闭抽取时，仍能从消息通道找回证据并产生 `message` 引用。
+- 常驻画像：Profile 文本进入上下文；动态事实默认不进入，显式 opt-in 后可进入。
+- 覆盖率弃权：无证据且低于阈值时 `InsufficientEvidence=true`。
 - 报告包含 accuracy、平均/P95 延迟、平均 token、总耗时；`-json` 供趋势对比。
 
 ---
@@ -430,7 +442,8 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 
 - `storage.Repos` 可扩展 `Search`/`CandidateQuery` 以接入 ANN，而不改上层排序。
 - `Extractor` 接口可插入更强的 schema 抽取器。
-- `BuildContext` 已有预算、引用与双通道；`ContextOptions` 可继续加 reranker、分层（working/episodic/semantic/procedural）与查询路由。
+- `BuildContext` 已有三通道、预算、MMR、覆盖率与引用；`ContextOptions` 可继续加 reranker、分层（working/episodic/semantic/procedural）与查询路由。
+- `Profile` 当前基于 slot 分类；后续可在不改存储的前提下增加 observation/mental-model 汇总层。
 - `mcpserver` 只做协议适配，新增工具应复用 `Memori` 公共 API；HTTP 传输可复用同一 server。
 - `eval.Scenario` 可挂接外部数据集读取器，同时保留当前零依赖回归集。
 - `Transactional` 已为未来 Mongo 副本集事务留出实现位。

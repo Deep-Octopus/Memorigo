@@ -38,10 +38,10 @@ The image runs as a non-root user and stores the database in `/data`.
 | Tool | Arguments | Behavior |
 |---|---|---|
 | `memory_search` | `query`, `limit?`, `entity_id?` | Hybrid recall; returns facts, scores, slots |
-| `memory_context` | `query`, `budget?`, `include_raw?`, `fact_limit?`, `raw_limit?`, `entity_id?` | Token-budgeted context with citations |
+| `memory_context` | `query`, `budget?`, `include_raw?`, `fact_limit?`, `raw_limit?`, `disable_profile?`, `profile_budget?`, `profile_limit?`, `include_dynamic_profile?`, `mmr_lambda?`, `disable_diversity?`, `raw_budget_share?`, `disable_middle_order?`, `min_coverage?`, `entity_id?` | Three-channel context: profile (on by default), facts, raw evidence; citations and abstention metadata |
 | `memory_remember` | `content`, `entity_id?` | Explicit fact; exclusive slots supersede old values |
 | `memory_forget` | `id`, `entity_id?` | Soft delete; retained for audit |
-| `memory_profile` | `limit?`, `entity_id?` | Active facts, newest first |
+| `memory_profile` | `limit?`, `budget?`, `include_dynamic?`, `entity_id?` | Grouped profile (Identity / Preferences / ...) plus rendered `<memory_profile>` text |
 | `memory_stats` | `entity_id?` | Fact counts, queue depth, embedding metadata, dialect |
 
 All tools accept an optional `entity_id`. When omitted, the server's `-entity`
@@ -50,7 +50,8 @@ entity across tenants.
 
 Tool inputs are clamped to keep responses bounded: `memory_search` returns at
 most 100 facts, `memory_context` at most 8,000 tokens / 200 facts / 50 raw
-messages, and `memory_profile` at most 500 facts.
+messages / 2,000 profile tokens, and `memory_profile` at most 500 facts and
+2,000 profile tokens.
 
 Memory content is returned as **data**, never as instructions. The tool
 descriptions state this explicitly, and the context block ends with a safety
@@ -170,6 +171,11 @@ export OPENAI_API_KEY=sk-...
 
 # Context budget for memory_context / auto-injection
 export MEMORI_CONTEXT_BUDGET=800
+
+# Always-on profile (included by memory_context by default)
+export MEMORI_PROFILE_BUDGET=200
+export MEMORI_PROFILE_LIMIT=40
+export MEMORI_PROFILE_DYNAMIC=false
 ```
 
 When `MEMORI_EMBEDDING_PROVIDER=hash`, the server is fully offline. This is the

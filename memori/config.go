@@ -42,6 +42,14 @@ type RecallConfig struct {
 	RecencyHalfLife  time.Duration
 }
 
+// ProfileConfig controls the always-on profile injected independently of the
+// current query.
+type ProfileConfig struct {
+	Budget         int
+	Limit          int
+	IncludeDynamic bool
+}
+
 // StorageConfig records the detected storage dialect.
 type StorageConfig struct {
 	Dialect string
@@ -75,6 +83,7 @@ type Config struct {
 	Embedding  EmbeddingConfig
 	Extraction ExtractionConfig
 	Recall     RecallConfig
+	Profile    ProfileConfig
 	Storage    StorageConfig
 	LLM        LLMConfig
 }
@@ -93,6 +102,7 @@ type configSnapshot struct {
 	Embedding     EmbeddingConfig
 	Extraction    ExtractionConfig
 	Recall        RecallConfig
+	Profile       ProfileConfig
 }
 
 func newConfig() *Config {
@@ -131,6 +141,11 @@ func newConfig() *Config {
 			WeightFrequency:  envFloat("MEMORI_RECALL_WEIGHT_FREQUENCY", 0.10),
 			RecencyHalfLife:  envDuration("MEMORI_RECALL_RECENCY_HALF_LIFE", 7*24*time.Hour),
 		},
+		Profile: ProfileConfig{
+			Budget:         envInt("MEMORI_PROFILE_BUDGET", 200),
+			Limit:          envInt("MEMORI_PROFILE_LIMIT", 40),
+			IncludeDynamic: envBool("MEMORI_PROFILE_DYNAMIC", false),
+		},
 	}
 	return c
 }
@@ -151,6 +166,7 @@ func (c *Config) snapshot() configSnapshot {
 		Embedding:     c.Embedding,
 		Extraction:    c.Extraction,
 		Recall:        c.Recall,
+		Profile:       c.Profile,
 	}
 }
 

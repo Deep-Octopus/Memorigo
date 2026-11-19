@@ -146,3 +146,52 @@ func TestNormalizedWeights(t *testing.T) {
 		t.Fatalf("default weights = %v %v %v %v", sim, lex, rec, freq)
 	}
 }
+
+func TestSelectDiverseRankedPrefersCoverage(t *testing.T) {
+	ranked := []rankedFact{
+		{fact: makeFact(t, 1, "My favorite color is blue", 1, time.Hour), score: 0.90},
+		{fact: makeFact(t, 2, "My favorite color is blue and green", 1, time.Hour), score: 0.88},
+		{fact: makeFact(t, 3, "I live in Shanghai", 1, time.Hour), score: 0.70},
+	}
+	pure := selectDiverseRanked(ranked, 2, 1)
+	if pure[0].fact.ID != 1 || pure[1].fact.ID != 2 {
+		t.Fatalf("lambda=1 should be pure relevance: %#v", pure)
+	}
+	diverse := selectDiverseRanked(ranked, 2, 0.3)
+	if diverse[0].fact.ID != 1 || diverse[1].fact.ID != 3 {
+		t.Fatalf("MMR should avoid the near-duplicate: %#v", diverse)
+	}
+}
+
+func TestMiddleOrderFactsKeepsStrongestAtEdges(t *testing.T) {
+	facts := []Fact{
+		{ID: 1, Score: 0.9},
+		{ID: 2, Score: 0.8},
+		{ID: 3, Score: 0.7},
+		{ID: 4, Score: 0.6},
+	}
+	ordered := middleOrderFacts(facts)
+	got := []int64{ordered[0].ID, ordered[1].ID, ordered[2].ID, ordered[3].ID}
+	want := []int64{1, 3, 4, 2}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("middle order = %v, want %v", got, want)
+		}
+	}
+	if len(middleOrderFacts(facts[:2])) != 2 {
+		t.Fatal("short fact lists should pass through")
+	}
+}
+
+func TestFactsFromRankedPreservesScores(t *testing.T) {
+	ranked := []rankedFact{{
+		fact:       makeFact(t, 7, "My favorite color is blue", 2, time.Hour),
+		score:      0.75,
+		similarity: 0.5,
+		lexical:    0.25,
+	}}
+	facts := factsFromRanked(ranked)
+	if len(facts) != 1 || facts[0].ID != 7 || facts[0].Score != 0.75 || facts[0].LexicalScore != 0.25 {
+		t.Fatalf("unexpected facts: %#v", facts)
+	}
+}

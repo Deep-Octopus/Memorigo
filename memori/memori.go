@@ -272,6 +272,17 @@ func (m *Memori) Recall(query string, limit int) ([]Fact, error) {
 
 // RecallContext is Recall with caller-controlled cancellation.
 func (m *Memori) RecallContext(ctx context.Context, query string, limit int) ([]Fact, error) {
+	ranked, err := m.recallRanked(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	return factsFromRanked(ranked), nil
+}
+
+// recallRanked resolves the current entity and returns the full hybrid ranking
+// (including component scores) without converting to the public Fact shape.
+// BuildContext uses the extra fields for diversity selection.
+func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]rankedFact, error) {
 	if m.closed.Load() {
 		return nil, ErrClosed
 	}
@@ -304,7 +315,16 @@ func (m *Memori) RecallContext(ctx context.Context, query string, limit int) ([]
 	if err != nil {
 		return nil, err
 	}
+	return m.recallRankedForEntity(ctx, repos, entityID, query, limit, snap)
+}
 
+func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos, entityID int64, query string, limit int, snap configSnapshot) ([]rankedFact, error) {
+	if limit <= 0 {
+		limit = snap.RecallLimit
+	}
+	if limit <= 0 {
+		limit = 5
+	}
 	var queryEmbedding []float32
 	if strings.TrimSpace(query) != "" {
 		var embedErr error
@@ -325,21 +345,7 @@ func (m *Memori) RecallContext(ctx context.Context, query string, limit int) ([]
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
-	out := make([]Fact, 0, len(ranked))
-	for _, r := range ranked {
-		out = append(out, Fact{
-			ID:             r.fact.ID,
-			Content:        r.fact.Content,
-			Slot:           r.fact.Slot,
-			Score:          r.score,
-			Similarity:     r.similarity,
-			LexicalScore:   r.lexical,
-			NumTimes:       r.fact.NumTimes,
-			DateLastTime:   r.fact.DateLastTime,
-			ConversationID: r.fact.SourceConversationID,
-		})
-	}
-	return out, nil
+	return ranked, nil
 }
 
 // MemoryContext recalls relevant facts and renders them with the configured

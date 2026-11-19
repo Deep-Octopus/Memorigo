@@ -118,7 +118,7 @@
 ```text
 eval/
   eval.go       # Runner、断言、Report、JSON
-  scenarios.go  # 11 个内置场景
+  scenarios.go  # 15 个内置场景
   eval_test.go
 cmd/memorigo-eval/
   main.go       # -filter / -json / -timeout
@@ -129,7 +129,7 @@ go run ./cmd/memorigo-eval
 go run ./cmd/memorigo-eval -json -filter context
 ```
 
-覆盖：事实召回、偏好覆盖、搬家覆盖、跨 session 连续、遗忘、噪声抵抗、中文召回、token 预算、原始证据回退。全部使用内存 SQLite + 离线 hash 嵌入，无 API key、无网络。
+覆盖：事实召回、偏好覆盖、搬家覆盖、跨 session 连续、遗忘、噪声抵抗、中文召回、token 预算、原始证据回退、常驻画像、动态画像开关、覆盖率弃权。全部使用内存 SQLite + 离线 hash 嵌入，无 API key、无网络。
 
 它解决的是“核心闭环退化”问题，不替代外部质量评测。下一阶段仍需：
 
@@ -140,7 +140,7 @@ eval/
   judge/        # LLM-judge + 人工抽检
 ```
 
-验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 11/11 只代表确定性回归通过，**不可与 LoCoMo/LongMemEval 分数横向比较**。
+验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 15/15 只代表确定性回归通过，**不可与 LoCoMo/LongMemEval 分数横向比较**。
 
 ---
 
@@ -161,15 +161,16 @@ eval/
 | SQLite / PostgreSQL / MongoDB Repos | ✅ |
 | 归因隔离、错误不 panic、Stats | ✅ |
 | 单元 + SQLite 集成 + httptest 协议测试 + race | ✅ |
-| **确定性评测 harness + CLI（9 场景）** | ✅ |
+| **确定性评测 harness + CLI（15 场景）** | ✅ |
 | **`BuildContext`：token 预算 + 引用 + 原始证据双通道** | ✅ |
+| **常驻 Profile + MMR 多样性 + 覆盖率弃权 + 位置重排** | ✅ |
 | **MCP server：search/context/remember/forget/profile/stats + stdio/HTTP** | ✅ |
 
 ### 仍缺
 
 1. **外部评测与三基线**：当前只有确定性回归，尚未接 LoCoMo / LongMemEval，也没有 full-context / naive-RAG / LLM-judge 对比。
 2. **ANN 索引**：候选集扫描上限 2000，规模上升后延迟线性增长。
-3. **时态 v3**：缺 `valid_from/valid_to`、`source_message_id`、置信度与弃答。
+3. **时态 v3**：缺 `valid_from/valid_to`、`source_message_id`、置信度与信任分级（上下文覆盖率弃权已交付）。
 4. **多租户**：只有 `entity_id`，没有 org/app/agent 作用域与 RLS。
 5. **MCP 生产治理**：HTTP 已有 Bearer 鉴权和 TLS 入口，但没有 OAuth、按工具授权、配额与审计日志。
 6. **巩固/遗忘 job**：只有手动 Forget，没有合并、衰减、TTL。
@@ -182,7 +183,7 @@ eval/
 
 ### P0：正确性与可证明性（接下来 4–6 周）
 
-> 状态（2026-11-18）：P0-1 的确定性回归部分已完成（`eval/` + 9 场景 + CI）；外部数据集与三基线仍未做。P0-4 的 slot/status 覆盖已具备，但 `valid_from/valid_to` 尚未加。
+> 状态（2026-11-18）：P0-1 的确定性回归部分已完成（`eval/` + 15 场景 + CI）；外部数据集与三基线仍未做。P0-4 的 slot/status 覆盖已具备，但 `valid_from/valid_to` 尚未加。
 
 | # | 事项 | Impact | Effort | 验收信号 |
 |---|---|---|---|---|
@@ -260,7 +261,7 @@ asserted_by       TEXT NOT NULL DEFAULT 'user'  -- user / assistant / inferred
 | # | 事项 | Impact | Effort | 验收信号 |
 |---|---|---|---|---|
 | P1-1 | **上下文装配 `BuildContext(query, budget)`**（✅ 已交付） | 4 | 中 | 输出带引用、token 预算、分层片段；注入 token 可控 |
-| P1-2 | **双通道检索**：事实 + 原始消息联合重排（✅ 基础版已交付） | 4 | 中 | memory tax 可量化；证据覆盖率提升 |
+| P1-2 | **三通道上下文**：Profile + 事实 + 原始消息，MMR / 覆盖率 / 位置重排（✅ 基础版已交付） | 4 | 中 | memory tax 可量化；证据覆盖率提升 |
 | P1-3 | **MCP server**（✅ stdio + HTTP + Bearer 已交付） | 4 | 中 | Claude Code / Cursor 可读写；工具有集成测试 |
 | P1-4 | **框架适配**：Eino / Genkit 薄适配 | 3 | 低 | 示例可运行；不绑定框架抽象 |
 | P1-5 | **巩固/遗忘 job** | 3 | 中 | 记忆条数下降而 accuracy 不降；可回滚 |
@@ -355,7 +356,7 @@ memory_stats(entity_id?)
 
 ### 第 1–2 周：评测地基（✅ 确定性部分完成）
 
-- 已建 `eval/` 与 `cmd/memorigo-eval`，11 个场景进 CI。
+- 已建 `eval/` 与 `cmd/memorigo-eval`，15 个场景进 CI。
 - 已输出表格式与 JSON 报告（accuracy / P95 / token）。
 - 待做：接入 LongMemEval dev + 50 条私有场景，补 full-context 与 naive RAG 基线。
 
@@ -429,4 +430,4 @@ memory_stats(entity_id?)
 
 ## 9. 一句话建议
 
-**评测地基、双通道上下文与 MCP 已落地；下一步用外部数据集证明收益，再做 ANN + 时态 + 多租户。** 把 Memorigo 做成“Go 生态里最可信、最可自托管的记忆层”，而不是“功能最多的记忆框架”。
+**评测地基、三通道上下文与 MCP 已落地；下一步用外部数据集证明收益，再做 ANN + 时态 + 多租户。** 把 Memorigo 做成“Go 生态里最可信、最可自托管的记忆层”，而不是“功能最多的记忆框架”。

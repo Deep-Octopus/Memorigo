@@ -22,6 +22,9 @@ func TestConfigEnvParsing(t *testing.T) {
 	t.Setenv("MEMORI_RECALL_MIN_SCORE", "0.2")
 	t.Setenv("MEMORI_RECALL_WEIGHT_SIMILARITY", "0.5")
 	t.Setenv("MEMORI_RECALL_RECENCY_HALF_LIFE", "48h")
+	t.Setenv("MEMORI_PROFILE_BUDGET", "320")
+	t.Setenv("MEMORI_PROFILE_LIMIT", "12")
+	t.Setenv("MEMORI_PROFILE_DYNAMIC", "true")
 
 	c := newConfig()
 	if c.RecallLimit != 9 || c.AutoInject || c.InjectLimit != 3 {
@@ -38,6 +41,9 @@ func TestConfigEnvParsing(t *testing.T) {
 	}
 	if c.Recall.ScanLimit != 500 || c.Recall.MinScore != 0.2 || c.Recall.WeightSimilarity != 0.5 || c.Recall.RecencyHalfLife != 48*time.Hour {
 		t.Fatalf("recall config = %#v", c.Recall)
+	}
+	if c.Profile.Budget != 320 || c.Profile.Limit != 12 || !c.Profile.IncludeDynamic {
+		t.Fatalf("profile config = %#v", c.Profile)
 	}
 }
 

@@ -34,11 +34,26 @@ type QueryCase struct {
 // ContextCheck asserts on BuildContext output. When set, ContextCheck replaces
 // the plain Recall assertion for this query.
 type ContextCheck struct {
-	Budget     int
-	IncludeRaw bool
-	WantText   []string
-	WantKinds  []string
-	MaxTokens  int
+	Budget       int
+	FactLimit    int
+	IncludeRaw   bool
+	RawLimit     int
+	WantText     []string
+	WantKinds    []string
+	MaxTokens    int
+	WantProfile  []string
+	AvoidProfile []string
+
+	IncludeProfile        bool
+	ProfileBudget         int
+	ProfileLimit          int
+	IncludeDynamicProfile bool
+	MMRLambda             float64
+	DisableDiversity      bool
+	RawBudgetShare        float64
+	DisableMiddleOrder    bool
+	MinCoverage           float64
+	WantInsufficient      bool
 }
 
 // Scenario seeds a Memori instance and then runs query assertions.
@@ -52,14 +67,17 @@ type Scenario struct {
 
 // QueryResult is the outcome of one query assertion.
 type QueryResult struct {
-	Scenario  string        `json:"scenario"`
-	Query     string        `json:"query"`
-	Passed    bool          `json:"passed"`
-	Reason    string        `json:"reason,omitempty"`
-	Latency   time.Duration `json:"latency_ns"`
-	Facts     int           `json:"facts"`
-	Tokens    int           `json:"tokens,omitempty"`
-	Truncated bool          `json:"truncated,omitempty"`
+	Scenario     string        `json:"scenario"`
+	Query        string        `json:"query"`
+	Passed       bool          `json:"passed"`
+	Reason       string        `json:"reason,omitempty"`
+	Latency      time.Duration `json:"latency_ns"`
+	Facts        int           `json:"facts"`
+	Profile      int           `json:"profile,omitempty"`
+	Tokens       int           `json:"tokens,omitempty"`
+	Coverage     float64       `json:"coverage,omitempty"`
+	Insufficient bool          `json:"insufficient,omitempty"`
+	Truncated    bool          `json:"truncated,omitempty"`
 }
 
 // Report aggregates scenario results.
@@ -142,6 +160,9 @@ func runScenario(ctx context.Context, sc Scenario) ([]QueryResult, error) {
 			c.LogLevel = "off"
 			c.AutoInject = false
 			c.Embedding.Provider = "hash"
+			c.Profile.Budget = 200
+			c.Profile.Limit = 40
+			c.Profile.IncludeDynamic = false
 			if sc.NoExtraction {
 				c.Extraction.Provider = "off"
 			} else {
@@ -211,15 +232,29 @@ func checkRecall(ctx context.Context, m *memori.Memori, q QueryCase, result *Que
 func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *QueryResult) {
 	check := q.Context
 	pkg, err := m.BuildContext(ctx, q.Query, memori.ContextOptions{
-		TokenBudget: check.Budget,
-		IncludeRaw:  check.IncludeRaw,
+		TokenBudget:           check.Budget,
+		FactLimit:             check.FactLimit,
+		IncludeRaw:            check.IncludeRaw,
+		RawLimit:              check.RawLimit,
+		IncludeProfile:        check.IncludeProfile,
+		ProfileBudget:         check.ProfileBudget,
+		ProfileLimit:          check.ProfileLimit,
+		IncludeDynamicProfile: check.IncludeDynamicProfile,
+		MMRLambda:             check.MMRLambda,
+		DisableDiversity:      check.DisableDiversity,
+		RawBudgetShare:        check.RawBudgetShare,
+		DisableMiddleOrder:    check.DisableMiddleOrder,
+		MinCoverage:           check.MinCoverage,
 	})
 	if err != nil {
 		result.Reason = "context error: " + err.Error()
 		return
 	}
 	result.Facts = len(pkg.Facts)
+	result.Profile = pkg.ProfileCount
 	result.Tokens = pkg.Tokens
+	result.Coverage = pkg.Coverage
+	result.Insufficient = pkg.InsufficientEvidence
 	result.Truncated = pkg.Truncated
 	if pkg.Tokens > pkg.Budget {
 		result.Reason = fmt.Sprintf("tokens %d exceed budget %d", pkg.Tokens, pkg.Budget)
@@ -229,7 +264,13 @@ func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *Qu
 		result.Reason = fmt.Sprintf("tokens %d exceed max %d", pkg.Tokens, check.MaxTokens)
 		return
 	}
+	if check.WantInsufficient && !pkg.InsufficientEvidence {
+		result.Reason = fmt.Sprintf("expected insufficient evidence, coverage=%.2f", pkg.Coverage)
+		return
+	}
 	reason := assertContains(pkg.Text, check.WantText)
+	reason += assertContains(pkg.ProfileText, check.WantProfile)
+	reason += assertAvoids(pkg.ProfileText, check.AvoidProfile)
 	for _, kind := range check.WantKinds {
 		found := false
 		for _, c := range pkg.Citations {

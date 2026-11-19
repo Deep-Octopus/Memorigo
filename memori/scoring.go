@@ -153,6 +153,98 @@ func uniqueStrings(in []string) []string {
 	return out
 }
 
+// factsFromRanked converts the internal ranking into the public Fact shape.
+func factsFromRanked(ranked []rankedFact) []Fact {
+	out := make([]Fact, 0, len(ranked))
+	for _, r := range ranked {
+		out = append(out, Fact{
+			ID:             r.fact.ID,
+			Content:        r.fact.Content,
+			Slot:           r.fact.Slot,
+			Score:          r.score,
+			Similarity:     r.similarity,
+			LexicalScore:   r.lexical,
+			NumTimes:       r.fact.NumTimes,
+			DateLastTime:   r.fact.DateLastTime,
+			ConversationID: r.fact.SourceConversationID,
+		})
+	}
+	return out
+}
+
+// selectDiverseRanked applies maximal marginal relevance (MMR) to the ranked
+// pool: each pick maximizes relevance minus redundancy against what is already
+// selected. This avoids filling a small budget with near-duplicate memories.
+// lambda=1 is pure relevance and reproduces top-k behavior.
+func selectDiverseRanked(ranked []rankedFact, limit int, lambda float64) []rankedFact {
+	if limit <= 0 || len(ranked) == 0 {
+		return nil
+	}
+	if len(ranked) <= limit || lambda >= 0.999 {
+		if len(ranked) > limit {
+			return ranked[:limit]
+		}
+		return ranked
+	}
+	lambda = clamp01(lambda)
+	selected := make([]rankedFact, 0, limit)
+	remaining := make([]rankedFact, len(ranked))
+	copy(remaining, ranked)
+
+	for len(selected) < limit && len(remaining) > 0 {
+		bestIdx := 0
+		bestValue := math.Inf(-1)
+		for i, candidate := range remaining {
+			maxSim := 0.0
+			for _, chosen := range selected {
+				if sim := factSimilarity(candidate.fact, chosen.fact); sim > maxSim {
+					maxSim = sim
+				}
+			}
+			value := lambda*candidate.score - (1-lambda)*maxSim
+			if value > bestValue {
+				bestValue = value
+				bestIdx = i
+			}
+		}
+		selected = append(selected, remaining[bestIdx])
+		remaining = append(remaining[:bestIdx], remaining[bestIdx+1:]...)
+	}
+	return selected
+}
+
+// factSimilarity prefers dense cosine similarity and falls back to token
+// Jaccard when embeddings are unavailable or have different dimensions.
+func factSimilarity(a, b storage.FactResult) float64 {
+	if len(a.Embedding) > 0 && len(a.Embedding) == len(b.Embedding) {
+		return clamp01(embed.CosineSimilarity(a.Embedding, b.Embedding))
+	}
+	return tokenJaccard(a.Content, b.Content)
+}
+
+func tokenJaccard(a, b string) float64 {
+	at := uniqueStrings(defaultFactTokens.tokenize(a))
+	bt := uniqueStrings(defaultFactTokens.tokenize(b))
+	if len(at) == 0 || len(bt) == 0 {
+		return 0
+	}
+	set := make(map[string]struct{}, len(at))
+	for _, t := range at {
+		set[t] = struct{}{}
+	}
+	inter := 0
+	for _, t := range bt {
+		if _, ok := set[t]; ok {
+			inter++
+		}
+	}
+	union := len(at) + len(bt) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
 // bm25Scores computes one BM25 score per fact and returns the maximum raw
 // score so callers can normalize to [0, 1]. It only tracks term frequencies
 // for the query terms, which keeps the per-fact working set small.

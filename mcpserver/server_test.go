@@ -34,6 +34,9 @@ func newMemori(t *testing.T) *memori.Memori {
 			c.AutoInject = false
 			c.Embedding.Provider = "hash"
 			c.Extraction.Provider = "heuristic"
+			c.Profile.Budget = 200
+			c.Profile.Limit = 40
+			c.Profile.IncludeDynamic = false
 		}),
 	)
 	t.Cleanup(func() { _ = m.Close() })
@@ -121,6 +124,17 @@ func TestToolsReadWriteFlow(t *testing.T) {
 	if !strings.Contains(raw, "<memory_context>") || !strings.Contains(raw, "[fact:") {
 		t.Fatalf("unexpected context package: %s", raw)
 	}
+	var contextResult struct {
+		ProfileCount int    `json:"profile_count"`
+		ProfileText  string `json:"profile_text"`
+		Text         string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &contextResult); err != nil {
+		t.Fatalf("decode context result: %v", err)
+	}
+	if contextResult.ProfileCount != 1 || !strings.Contains(contextResult.ProfileText, "blue") {
+		t.Fatalf("memory_context did not include the profile: %s", raw)
+	}
 
 	raw, err = callTool(t, session, "memory_profile", map[string]any{"limit": 10})
 	if err != nil {
@@ -128,6 +142,9 @@ func TestToolsReadWriteFlow(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(raw), "blue") {
 		t.Fatalf("profile missing fact: %s", raw)
+	}
+	if !strings.Contains(raw, `"sections"`) || !strings.Contains(raw, `"Preferences"`) {
+		t.Fatalf("profile is not grouped: %s", raw)
 	}
 
 	raw, err = callTool(t, session, "memory_stats", nil)
@@ -195,6 +212,38 @@ func TestEntityScoping(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(raw), "blue") {
 		t.Fatalf("alice lost her fact: %s", raw)
+	}
+}
+
+func TestContextProfileControlsAndAbstention(t *testing.T) {
+	session := newSession(t, false)
+	if _, err := callTool(t, session, "memory_remember", map[string]any{
+		"content": "My name is Alice",
+	}); err != nil {
+		t.Fatalf("remember: %v", err)
+	}
+
+	raw, err := callTool(t, session, "memory_context", map[string]any{
+		"query":           "quantum flux capacitor",
+		"disable_profile": true,
+		"min_coverage":    0.9,
+	})
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	var result struct {
+		Text                 string  `json:"text"`
+		InsufficientEvidence bool    `json:"insufficient_evidence"`
+		Coverage             float64 `json:"coverage"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("decode context result: %v", err)
+	}
+	if !result.InsufficientEvidence {
+		t.Fatalf("expected abstention, coverage=%v: %s", result.Coverage, raw)
+	}
+	if strings.Contains(result.Text, "<memory_profile>") {
+		t.Fatalf("disable_profile did not disable the profile: %s", raw)
 	}
 }
 

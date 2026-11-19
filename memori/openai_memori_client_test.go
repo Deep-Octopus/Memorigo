@@ -125,14 +125,20 @@ func TestAutoInjectAndOriginalPersistence(t *testing.T) {
 	}
 
 	reqs := rec.waitFor(t, 1)
-	var injected bool
+	var injected, profileInjected bool
 	for _, msg := range reqs[0].Messages {
 		if msg.Role == "system" && strings.Contains(msg.Content, "<memories>") && strings.Contains(msg.Content, "blue") {
 			injected = true
 		}
+		if msg.Role == "system" && strings.Contains(msg.Content, "<memory_profile>") && strings.Contains(msg.Content, "Preferences") {
+			profileInjected = true
+		}
 	}
 	if !injected {
 		t.Fatalf("memory system message missing: %#v", reqs[0].Messages)
+	}
+	if !profileInjected {
+		t.Fatalf("profile missing from injected memory: %#v", reqs[0].Messages)
 	}
 	if last := reqs[0].Messages[len(reqs[0].Messages)-1]; last.Role != "user" || last.Content != "What is my favorite color?" {
 		t.Fatalf("user message moved or altered: %#v", reqs[0].Messages)

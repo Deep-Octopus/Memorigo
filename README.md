@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Go Agent 的生产级长期记忆层。</strong><br>
-  从对话到可引用上下文，一条流水线完成：写入 · 抽取 · 时态治理 · 混合召回 · Token 预算 · MCP 分发。
+  从对话到可引用上下文，一条流水线完成：写入 · 抽取 · 时态治理 · 混合召回 · 常驻画像 · 预算上下文 · MCP 分发。
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
-  <a href="#上下文引擎">上下文引擎</a> ·
+  <a href="#上下文引擎-v2">上下文引擎</a> ·
   <a href="#mcp-server">MCP Server</a> ·
   <a href="#评测与性能">评测与性能</a> ·
   <a href="docs/ARCHITECTURE.md">架构</a> ·
@@ -32,9 +32,9 @@
 
 大多数“Agent 记忆”项目只解决其中一层：要么是一个向量库封装，要么是一个托管 API，要么是一个只跑 demo 的抽取脚本。Memorigo 把**整条记忆链路**做成了一个可自托管、可测试、可部署的 Go 库：
 
-- **不是向量库的薄封装**：事实抽取、slot 时态覆盖、稠密 + BM25 + 新近度 + 频率混合排序、token 预算上下文、引用回链全部内置。
+- **不是向量库的薄封装**：事实抽取、slot 时态覆盖、稠密 + BM25 + 新近度 + 频率混合排序、MMR 多样性选择、常驻用户画像、token 预算上下文、引用回链全部内置。
 - **不是托管 API 的客户端**：数据留在你的 SQLite / PostgreSQL / MongoDB；hash 嵌入 + 启发式抽取可以完全离线运行。
-- **不是 demo**：11 个确定性评测场景、MCP stdio/HTTP、Docker 镜像、跨平台 release 构建和 race 测试都已接通。
+- **不是 demo**：15 个确定性评测场景、MCP stdio/HTTP、Docker 镜像、跨平台 release 构建和 race 测试都已接通。
 
 > Memorigo 的定位是 **BYODB + 数据不出域 + 单二进制分发**。与 Python 版 [Memori](https://github.com/MemoriLabs/Memori) 的架构思路对齐，但存储、检索、上下文与分发层用 Go 重新实现。
 
@@ -45,8 +45,10 @@
 | 数据驻留 | 你的数据库/文件 | 你的数据库 | 厂商云 |
 | 事实抽取 + slot 覆盖 | 内置 | 需自建 | 有 |
 | 稠密 + BM25 + 新近度 + 频率 | 内置 | 通常仅向量 | 部分 |
+| 常驻用户画像（查询无关） | 内置 | 需自建 | 部分 |
+| MMR 多样性 + 覆盖率弃权 | 内置 | 需自建 | 少见 |
 | Token 预算 + 引用上下文 | 内置 | 需自建 | 部分 |
-| 原始消息证据双通道 | 内置 | 需自建 | 少见 |
+| 事实 + 原始证据 + 常驻画像 | 内置 | 需自建 | 少见 |
 | MCP stdio + HTTP | 内置 | 通常无 | 部分 |
 | 完全离线运行 | hash + heuristic | 取决于实现 | 否 |
 | 可审计软删除 + 来源追踪 | 内置 | 取决于实现 | 部分 |
@@ -67,8 +69,10 @@ flowchart LR
     Q[用户问题] --> J[候选扫描]
     H --> J
     J --> K[稠密 + BM25 + 新近度 + 频率]
-    K --> L[Top-K 事实]
-    L --> M[BuildContext<br/>Token 预算 + 引用]
+    K --> L[MMR 多样性选择]
+    H --> P[常驻 Profile<br/>Identity / Preferences / ...]
+    L --> M[BuildContext<br/>预算 + 覆盖评估 + 引用]
+    P --> M
     B -. 原始消息证据 .-> M
     M --> N[自动注入 / MCP / SDK]
 ```
@@ -77,7 +81,8 @@ flowchart LR
 
 - **写路径幂等**：同一 session 内客户端重发完整历史不会重复落库或膨胀 `num_times`。
 - **只落库原始消息**：注入的记忆块不会污染后续对话历史。
-- **事实与证据双通道**：抽取遗漏时，原始消息仍能作为引用证据进入上下文。
+- **三通道上下文**：常驻画像保证稳定背景，查询事实提供高信号压缩视图，原始消息在抽取遗漏时兜底。
+- **先选多样性，再排位置**：MMR 避免预算被近重复事实占满；强证据放在上下文首尾，降低 lost-in-the-middle。
 - **默认纯 Go**：`CGO_ENABLED=0` 可构建；SQLite 使用 `modernc.org/sqlite`。
 
 ---
@@ -169,30 +174,68 @@ go run ./examples/mongodb      # 需要 MONGODB_URI
 
 ---
 
-## 上下文引擎
+## 上下文引擎 v2
 
-`BuildContext` 把“长期事实”和“原始对话证据”放进同一个 token 预算，并返回稳定引用。事实优先占用预算，原始消息填充剩余空间；抽取遗漏时仍有证据兜底，而注入不会无限膨胀。
+`BuildContext` 把三条通道放进同一个 token 预算：**常驻 Profile**（查询无关的稳定背景）、**查询事实**（混合召回 + MMR 多样性选择）、**原始对话证据**（抽取遗漏时的兜底）。返回前还会计算覆盖率、标记证据不足，并把强证据放到上下文首尾。
 
 ```go
 pkg, err := m.BuildContext(ctx, "What does the user prefer?", memori.ContextOptions{
-	TokenBudget: 600,   // 0 使用 MEMORI_CONTEXT_BUDGET（默认 800）
-	IncludeRaw:  true,  // 加入相关原始消息
-	RawLimit:    4,     // 最多 4 条
-	RawScan:     200,   // 扫描最近 200 条消息
+	TokenBudget:           600,  // 0 使用 MEMORI_CONTEXT_BUDGET（默认 800）
+	IncludeProfile:        true, // 注入常驻画像
+	IncludeDynamicProfile: false, // 默认只放稳定事实，不放近期焦点/情绪
+	IncludeRaw:            true, // 加入相关原始消息
+	RawLimit:              4,    // 最多 4 条
+	RawScan:               200,  // 扫描最近 200 条消息
+	MMRLambda:             0.7,  // 相关性 vs 多样性；0.7 是默认值
+	RawBudgetShare:        0.25, // 为原始证据预留剩余预算的 25%
+	MinCoverage:           0.5,  // 查询词覆盖率低于 50% 时标记证据不足
 })
 ```
 
 | 字段 | 含义 |
 |---|---|
 | `Text` | 以 `<memory_context>` 包裹的 prompt-ready 文本 |
+| `Profile` / `ProfileText` / `ProfileCount` | 常驻画像的结构化事实、渲染文本与条数 |
 | `Facts` / `Messages` | 结构化结果；消息可跨 session 检索同一 entity |
-| `Citations` | `fact:<id>` / `msg:<id>`，可回链到原始来源 |
+| `Citations` | `fact:<id>` / `msg:<id>`，包含 Profile 事实，可回链到原始来源 |
 | `Tokens` / `Budget` / `Truncated` | 估算用量、生效预算、是否裁剪 |
-| `FactCount` / `RawCount` | 两条通道各自命中的条数 |
+| `Coverage` / `TopScore` | 查询词元覆盖率与最高事实分 |
+| `InsufficientEvidence` | 无证据或覆盖率低于 `MinCoverage` 时为 true |
+| `FactCount` / `RawCount` | 两条查询通道各自命中的条数 |
 
-自动注入复用同一引擎，但只走事实通道，默认预算 800 token。完整算法见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#75-上下文组装)。
+自动注入复用同一引擎，默认同时注入 Profile 与查询事实，整体预算仍由 `MEMORI_CONTEXT_BUDGET` 控制。完整算法见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#75-上下文组装)。
 
-### 混合召回
+### 常驻画像 Profile
+
+画像不依赖当前 query，适合每轮都注入的“用户背景”。它直接从活跃事实的 slot 归类，无需额外 schema 或 LLM：
+
+```text
+<memory_profile>
+Identity:
+- [fact:12] My name is Alice
+- [fact:18] I live in Shanghai
+Preferences:
+- [fact:21] My favorite color is blue
+Skills:
+- [fact:28] I use Go every day
+</memory_profile>
+```
+
+```go
+profile, _ := m.Profile(ctx, memori.ProfileOptions{
+	TokenBudget:    200,
+	MaxFacts:       40,
+	IncludeDynamic: false, // 近期焦点/情绪默认不进入画像
+})
+fmt.Println(profile.Text)
+```
+
+- 静态分组：Identity、Preferences、Health、Skills。
+- 动态分组：Current focus、Opinions、Recent context；`IncludeDynamic` 打开，且只保留 90 天内有更新的事实。
+- 画像预算默认 200 token / 40 条，且在 `BuildContext` 中最多占整体预算的 1/3，不会挤掉查询证据。
+- Profile 与查询事实按 id 和内容双重去重；同一条记忆不会在上下文里出现两次。
+
+### 混合召回 + MMR
 
 召回不是单一余弦相似度。候选集内按归一化权重融合四路信号：
 
@@ -207,6 +250,22 @@ score = 0.60 * cosine_similarity
 - 有相关度闸门：查询有词元时，必须命中词法或达到最低余弦相似度。
 - 权重、半衰期、扫描上限、最低分均可配置。
 - 返回 `Score`、`Similarity`、`LexicalScore`、`NumTimes`、`Slot`，便于调试。
+
+取事实时先放宽候选池（`FactLimit × 4`，上限 200），再用 **MMR** 选择：
+
+```text
+pick = argmax(lambda * relevance - (1 - lambda) * max_similarity_to_selected)
+```
+
+默认 `lambda=0.7`；`DisableDiversity=true` 可回到纯 top-k。这样在小预算下不会连续塞入“同义反复”的事实。
+
+### 覆盖率与弃权
+
+`Coverage` 是查询词元被最终证据覆盖的比例（事实 + 消息 + Profile）。`MinCoverage > 0` 时，低于阈值会把 `InsufficientEvidence` 置为 true，调用方可以让模型回答“不知道”，而不是基于无关记忆硬编。没有显式阈值时，只有完全找不到任何证据才会标记。
+
+### Lost-in-the-middle 重排
+
+渲染顺序不是简单按分数排列：最强事实放第一，第二强放最后，其余向中间填。结构化 `Facts` 仍按分数排序，便于程序消费；只有 prompt 文本做位置优化。`DisableMiddleOrder=true` 可关闭。
 
 ### 时态事实
 
@@ -267,10 +326,10 @@ docker run --rm -p 8787:8787 \
 | 工具 | 作用 |
 |---|---|
 | `memory_search` | 混合召回，返回事实、分数与 slot |
-| `memory_context` | 组装带引用、受 token 预算约束的上下文 |
+| `memory_context` | 组装三通道上下文；默认带 Profile，支持 MMR、覆盖率弃权与位置重排 |
 | `memory_remember` | 显式写入事实；互斥 slot 自动覆盖旧值 |
 | `memory_forget` | 按 id 软删除 |
-| `memory_profile` | 列出当前 entity 的活跃事实 |
+| `memory_profile` | 返回分组画像（Identity / Preferences / Health / Skills / ...）及渲染文本 |
 | `memory_stats` | 事实数、积压任务、嵌入模型/维度、存储方言 |
 
 每个工具都支持可选的 `entity_id`，用于按用户隔离。详细配置、安全边界和排错见 [docs/MCP.md](docs/MCP.md)。
@@ -287,10 +346,10 @@ go run ./cmd/memorigo-eval -json
 make eval
 ```
 
-11 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。
+15 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。
 
 ```text
-accuracy: 11/11 (100.0%)  avg latency: 134µs  p95: 215µs  avg tokens: 17
+accuracy: 15/15 (100.0%)  avg latency: 116µs  p95: 193µs  avg tokens: 28
 ```
 
 （示例输出；延迟随机器与负载波动。）
@@ -316,7 +375,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | Benchmark | Time / op | Allocated / op | Allocs / op |
 |---|---:|---:|---:|
 | `Recall` (top-5) | ~11 ms | ~5.5 MB | ~40k |
-| `BuildContext` (800-token) | ~10 ms | ~5.5 MB | ~40k |
+| `BuildContext` (800-token) | ~11 ms | ~5.5 MB | ~40k |
 
 当前召回是候选集扫描 + Go 内打分，行为可预测、无需外部索引；ANN / FTS5 + RRF 是下一阶段的性能升级。评测方法与局限见 [docs/EVALUATION.md](docs/EVALUATION.md)。
 
@@ -358,6 +417,14 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_MEMORY_PROMPT` | 内置模板 | 必须含 `{{facts}}` |
 | `MEMORI_OP_TIMEOUT` | `20s` | 单次召回/操作超时 |
 | `MEMORI_LOG_LEVEL` | `error` | `debug/info/warn/error/off` |
+
+### 常驻画像
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORI_PROFILE_BUDGET` | `200` | Profile 渲染 token 上限 |
+| `MEMORI_PROFILE_LIMIT` | `40` | Profile 最多事实条数 |
+| `MEMORI_PROFILE_DYNAMIC` | `false` | 是否把近期焦点/情绪纳入 Profile |
 
 ### 嵌入与抽取
 
@@ -406,9 +473,10 @@ facts, _ := m.Recall("seat preference", 5)
 mc, _ := m.MemoryContext(ctx, "seat preference", 5)
 text, _ := m.ContextText(ctx, "seat preference", 5)
 pkg, _ := m.BuildContext(ctx, "seat preference", memori.ContextOptions{
-    TokenBudget: 600, IncludeRaw: true,
+    TokenBudget: 600, IncludeProfile: true, IncludeRaw: true,
 })
-profile, _ := m.Facts(20)
+facts, _ := m.Facts(20)
+profile, _ := m.Profile(ctx, memori.ProfileOptions{TokenBudget: 200})
 stats, _ := m.Stats(ctx)
 
 // 维护
@@ -420,7 +488,7 @@ n, _ := m.Reindex(ctx)    // 嵌入模型/维度变化后重建
 ## 项目结构
 
 ```text
-memori/       Memori 门面、Writer、增强流水线、召回排序、抽取器、上下文组装、OpenAI 兼容层
+memori/       Memori 门面、Writer、增强流水线、召回排序、MMR、Profile、上下文组装、抽取器、OpenAI 兼容层
 storage/      Repos 抽象、SQL/Mongo 实现、迁移、事务
 embed/        嵌入接口、hash/OpenAI/硅基流动、LRU 缓存、HTTP 重试
 textutil/     归一化、分词（英文 + CJK bigram）、句子切分、token 估算
@@ -443,10 +511,11 @@ docs/         架构、MCP、评测、路线图
 - 中英文启发式抽取 + LLM 严格 JSON 抽取
 - slot / status / superseded / 软删除
 - 稠密 + BM25 + 新近度 + 频率混合排序
+- MMR 多样性选择 + 常驻用户画像 + 覆盖率弃权 + 位置重排
 - 自动注入（含流式）与原始消息持久化
 - 嵌入模型/维度治理 + Reindex
-- Token 预算上下文 + 引用 + 原始证据双通道
-- 11 场景确定性评测 + CLI + CI
+- Token 预算上下文 + 引用 + 原始证据 + 常驻画像三通道
+- 15 场景确定性评测 + CLI + CI
 - MCP stdio + Streamable HTTP + Bearer 鉴权
 - Docker 镜像 + 跨平台 release 构建
 
@@ -465,6 +534,8 @@ docs/         架构、MCP、评测、路线图
 ## 已知边界
 
 - 召回目前是候选集 + Go 内打分，没有 ANN 索引；1,000 条事实约 10–11 ms，规模更大时请关注延迟并等待 ANN/FTS5。
+- 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
+- `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
 - 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**，也没有 LLM-judge 三基线。
 - MCP HTTP 使用 Bearer token，不含 OAuth、按工具授权或多租户 RLS；多租户请先做网络隔离与独立进程。
 - MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。

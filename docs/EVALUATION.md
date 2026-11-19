@@ -49,6 +49,8 @@ local overhead, not semantic quality of a production embedding model.
 | `token-budget` | context fits the budget and emits `fact:` citations |
 | `raw-evidence` | with extraction off, raw messages fill the evidence channel |
 | `cross-session-evidence` | raw messages are retrievable across sessions |
+| `profile-context` | the always-on profile is packed; dynamic focus is opt-in |
+| `context-abstention` | a coverage floor marks unsupported queries insufficient |
 
 ---
 
@@ -57,8 +59,8 @@ local overhead, not semantic quality of a production embedding model.
 Measured on 2026-11-18 with Go 1.26.3 on an Apple M5:
 
 ```text
-accuracy: 11/11 (100.0%)  avg latency: 134µs  p95: 215µs  avg tokens: 17
-duration: 49ms
+accuracy: 15/15 (100.0%)  avg latency: 116µs  p95: 193µs  avg tokens: 28
+duration: 50ms
 ```
 
 The numbers are intentionally small because each scenario runs on a fresh
@@ -77,7 +79,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | Benchmark | Time / op | Allocated / op | Allocs / op |
 |---|---:|---:|---:|
 | `Recall` (top-5) | ~11 ms | ~5.5 MB | ~40k |
-| `BuildContext` (800-token budget) | ~10 ms | ~5.5 MB | ~40k |
+| `BuildContext` (800-token budget) | ~11 ms | ~5.5 MB | ~40k |
 
 Recall currently scans the candidate set and scores in Go; it is deliberately
 simple and predictable. ANN / FTS5 candidates and RRF are the next performance
@@ -88,11 +90,11 @@ step. Treat these as a baseline, not a capacity claim.
 ## Interpreting results
 
 - **Passing scenarios** mean the core invariants still hold: extraction,
-  supersession, isolation, forgetting, bilingual recall, budget enforcement and
-  evidence citations.
+  supersession, isolation, forgetting, bilingual recall, budget enforcement,
+  profile assembly, abstention and evidence citations.
 - **They do not measure** answer quality, LLM-judge preference, long-context
   reasoning, multi-hop synthesis or cost per query.
-- **Do not compare** the `11/11` number with published LoCoMo or LongMemEval
+- **Do not compare** the `15/15` number with published LoCoMo or LongMemEval
   scores. The protocols are different.
 
 ## Next evaluation step

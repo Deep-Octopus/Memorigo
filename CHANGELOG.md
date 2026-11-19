@@ -4,6 +4,41 @@ All notable changes to Memorigo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Always-on profile** (`Memori.Profile`): a small, query-independent
+  `<memory_profile>` built from active facts and grouped into Identity,
+  Preferences, Health, Skills and optional dynamic sections. Static facts are
+  on by default; recent focus/opinion facts require `IncludeDynamic` and are
+  limited to 90 days.
+- **Context Engine v2** (`BuildContext`): three channels (profile, ranked facts,
+  raw evidence) share one token budget. Adds MMR diversity selection over a
+  4× candidate pool, cross-channel deduplication, coverage/abstention metadata
+  (`Coverage`, `TopScore`, `InsufficientEvidence`, `MinCoverage`), a raw-evidence
+  budget reserve, and lost-in-the-middle render ordering.
+- **Profile-aware auto-injection**: `{{profile}}` is now part of the default
+  memory prompt; older custom templates that omit it still receive the profile
+  before `{{facts}}`.
+- **MCP**: `memory_context` includes the profile by default and exposes
+  profile/MMR/raw-reserve/coverage controls; `memory_profile` returns grouped
+  sections plus the rendered profile text.
+- **Evaluation**: two new deterministic scenarios (`profile-context`,
+  `context-abstention`), now 15 total; `ContextCheck` can assert profile content,
+  dynamic-profile gating and abstention.
+- Configuration: `MEMORI_PROFILE_BUDGET` (200), `MEMORI_PROFILE_LIMIT` (40) and
+  `MEMORI_PROFILE_DYNAMIC` (false).
+- Research note `docs/MEMORY-LANDSCAPE-2026-11.md`, including the evidence for
+  profile-first and context-v2 priorities and the deferred fact-metadata work.
+
+### Changed
+
+- `DefaultMemoryPrompt` now contains both `{{profile}}` and `{{facts}}`.
+- `BuildContext` defaults to MMR (`MMRLambda=0.7`) and edge-weighted fact
+  ordering; both can be disabled for the previous pure-score behavior.
+- Profile facts are included in `ContextPackage.Citations`.
+
 ## [1.0.0] - 2026-11-18
 
 The first production-oriented release. Memorigo is now an end-to-end memory
