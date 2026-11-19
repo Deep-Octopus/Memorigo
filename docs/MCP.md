@@ -40,6 +40,7 @@ The image runs as a non-root user and stores the database in `/data`.
 | `memory_search` | `query`, `limit?`, `entity_id?` | Hybrid recall; returns facts, scores, slots |
 | `memory_context` | `query`, `budget?`, `include_raw?`, `fact_limit?`, `raw_limit?`, `disable_profile?`, `profile_budget?`, `profile_limit?`, `include_dynamic_profile?`, `mmr_lambda?`, `disable_diversity?`, `raw_budget_share?`, `disable_middle_order?`, `min_coverage?`, `entity_id?` | Three-channel context: profile (on by default), facts, raw evidence; citations and abstention metadata |
 | `memory_remember` | `content`, `entity_id?` | Explicit fact; exclusive slots supersede old values |
+| `memory_rule` | `content`, `entity_id?` | Standing plain-text rule. It stays in the profile until `memory_forget`. It is not executed |
 | `memory_forget` | `id`, `entity_id?` | Soft delete; retained for audit |
 | `memory_profile` | `limit?`, `budget?`, `include_dynamic?`, `entity_id?` | Grouped profile (Identity / Preferences / ...) plus rendered `<memory_profile>` text |
 | `memory_stats` | `entity_id?` | Fact counts, queue depth, embedding metadata, dialect |
@@ -78,7 +79,7 @@ Useful flags:
 -db         SQLite path (default memorigo.db, env MEMORI_DB)
 -entity     default entity id (default mcp-user)
 -process    provenance process id (default memorigo-mcp)
--readonly   disable memory_remember and memory_forget
+-readonly   disable memory_remember, memory_rule and memory_forget
 -scopes     tool allow-list (empty = all). Aliases: read, write, all
 -quota      max tool calls per minute in this process (0 = unlimited)
 -audit      append-only JSONL audit log (empty = off)
@@ -191,7 +192,7 @@ default and is suitable for local agents, tests and air-gapped deployments.
 ### Scopes, quota and audit
 
 `-scopes read` advertises search, context, profile and stats. `-scopes write`
-advertises remember and forget. `-readonly` still lists the write tools and
+advertises remember, rule and forget. `-readonly` still lists the write tools and
 rejects the call. An empty `-scopes` allows every tool.
 
 `-quota 60` allows 60 tool calls in a sliding minute inside this process.

@@ -15,6 +15,7 @@ const (
 	toolContext  = "memory_context"
 	toolRemember = "memory_remember"
 	toolForget   = "memory_forget"
+	toolRule     = "memory_rule"
 	toolProfile  = "memory_profile"
 	toolStats    = "memory_stats"
 
@@ -29,7 +30,7 @@ var (
 	errQuota     = errors.New("memorigo MCP quota exceeded")
 )
 
-var allTools = []string{toolSearch, toolContext, toolRemember, toolForget, toolProfile, toolStats}
+var allTools = []string{toolSearch, toolContext, toolRemember, toolForget, toolRule, toolProfile, toolStats}
 
 var scopeAliases = map[string][]string{
 	"memory_search":   {toolSearch},
@@ -40,12 +41,14 @@ var scopeAliases = map[string][]string{
 	"remember":        {toolRemember},
 	"memory_forget":   {toolForget},
 	"forget":          {toolForget},
+	"memory_rule":     {toolRule},
+	"rule":            {toolRule},
 	"memory_profile":  {toolProfile},
 	"profile":         {toolProfile},
 	"memory_stats":    {toolStats},
 	"stats":           {toolStats},
 	"read":            {toolSearch, toolContext, toolProfile, toolStats},
-	"write":           {toolRemember, toolForget},
+	"write":           {toolRemember, toolForget, toolRule},
 	"all":             allTools,
 }
 
@@ -160,7 +163,7 @@ func (s *state) permit(tool string) error {
 }
 
 func isWriteTool(name string) bool {
-	return name == toolRemember || name == toolForget
+	return name == toolRemember || name == toolForget || name == toolRule
 }
 
 // charge consumes one unit of the per-minute quota. Unlimited when the limit

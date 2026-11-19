@@ -166,11 +166,30 @@ func TestRememberRecallExportDelete(t *testing.T) {
 	}
 }
 
+func TestRuleAppearsInProfile(t *testing.T) {
+	srv := newServer(t, api.Options{Token: "secret"})
+	status, body := do(t, srv, http.MethodPost, "/v1/rules", "secret", map[string]string{
+		"entity_id": "alice",
+		"content":   "Always answer in Go",
+	})
+	if status != http.StatusOK || !bytes.Contains(body, []byte(`"id"`)) {
+		t.Fatalf("rule = %d %s", status, body)
+	}
+	status, body = do(t, srv, http.MethodGet, "/v1/profile?entity_id=alice", "secret", nil)
+	if status != http.StatusOK || !bytes.Contains(body, []byte("Always answer in Go")) || !bytes.Contains(body, []byte("Rules")) {
+		t.Fatalf("profile = %d %s", status, body)
+	}
+}
+
 func TestReadOnlyBlocksWrites(t *testing.T) {
 	srv := newServer(t, api.Options{Token: "secret", ReadOnly: true})
 	status, _ := do(t, srv, http.MethodPost, "/v1/remember", "secret", map[string]string{"content": "I like jazz records"})
 	if status != http.StatusForbidden {
 		t.Fatalf("remember status = %d", status)
+	}
+	status, _ = do(t, srv, http.MethodPost, "/v1/rules", "secret", map[string]string{"content": "Always answer in Go"})
+	if status != http.StatusForbidden {
+		t.Fatalf("rule status = %d", status)
 	}
 	status, body := do(t, srv, http.MethodPost, "/v1/maintain", "secret", map[string]any{
 		"ttl":     "1h",

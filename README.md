@@ -329,6 +329,7 @@ docker run --rm -p 8787:8787 \
 | `memory_search` | 混合召回，返回事实、分数与 slot |
 | `memory_context` | 组装三通道上下文；默认带 Profile，支持 MMR、覆盖率弃权与位置重排 |
 | `memory_remember` | 显式写入事实；互斥 slot 自动覆盖旧值 |
+| `memory_rule` | 写入常驻明文规则；不经过抽取，不执行规则 |
 | `memory_forget` | 按 id 软删除 |
 | `memory_profile` | 返回分组画像（Identity / Preferences / Health / Skills / ...）及渲染文本 |
 | `memory_stats` | 事实数、积压任务、嵌入模型/维度、存储方言 |
@@ -513,7 +514,7 @@ curl -s -H "Authorization: Bearer $MEMORI_API_TOKEN" \
   http://127.0.0.1:8788/v1/remember
 ```
 
-写入接口：`/v1/remember`、`/v1/forget`、`/v1/restore`、`/v1/maintain`、`DELETE /v1/subject`。读取接口：`/v1/recall`、`/v1/context`、`/v1/facts`、`/v1/profile`、`/v1/stats`、`/v1/export`。`-readonly` 拒绝写入，但允许 `maintain` 的 `dry_run`。同一进程内的请求串行切换 `entity_id`。
+写入接口：`/v1/remember`、`/v1/rules`、`/v1/forget`、`/v1/restore`、`/v1/maintain`、`DELETE /v1/subject`。读取接口：`/v1/recall`、`/v1/context`、`/v1/facts`、`/v1/profile`、`/v1/stats`、`/v1/export`。`-readonly` 拒绝写入，但允许 `maintain` 的 `dry_run`。同一进程内的请求串行切换 `entity_id`。`/v1/rules` 写入的是常驻明文规则，不是可执行程序。
 
 ---
 
@@ -558,7 +559,7 @@ docs/         架构、MCP、评测、路线图
 
 1. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
 2. 数据库 RLS、OAuth、OTel。稠密 ANN 仍不默认引入 cgo
-3. 程序性记忆与自适应检索仍是路线图后段，需要单独的评测证据
+3. 自适应检索、图扩展和多模态仍不做。程序性规则只保存明文，不执行。
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

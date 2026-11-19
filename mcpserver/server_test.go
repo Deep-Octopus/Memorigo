@@ -259,7 +259,7 @@ func TestListsMemoryTools(t *testing.T) {
 	}
 	for _, want := range []string{
 		"memory_search", "memory_context", "memory_remember",
-		"memory_forget", "memory_profile", "memory_stats",
+		"memory_forget", "memory_rule", "memory_profile", "memory_stats",
 	} {
 		if !got[want] {
 			t.Errorf("missing tool %q", want)

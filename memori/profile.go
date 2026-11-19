@@ -290,6 +290,8 @@ func profileSectionFor(slot string) (section string, priority, slotRank int, dyn
 		return "Identity", 70, 50, false
 	case strings.HasPrefix(s, "profile."):
 		return "Identity", 70, 40, false
+	case s == "procedure" || strings.HasPrefix(s, "procedure."):
+		return "Rules", 65, 80, false
 	case strings.HasPrefix(s, "favorite."):
 		return "Preferences", 60, 40, false
 	case strings.HasPrefix(s, "health."):

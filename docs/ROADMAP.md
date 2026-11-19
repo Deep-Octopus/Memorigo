@@ -176,7 +176,7 @@ eval/
 6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
 7. **本地嵌入/重排**：✅ Ollama `POST /api/embed` 与可选 HTTP rerank（默认关闭）。没有 ONNX，也没有把模型打进二进制；Ollama 需要本机已经拉好模型。
 8. **隐私**：✅ `Export`（版本 1 JSON）与 `DeleteSubject` 硬删除。`MEMORI_PII_REDACT` 默认关闭，只遮邮箱、电话和通过 Luhn 的卡号。不是 crypto-shredding，也不是数据库 RLS。
-9. **REST**：✅ `cmd/memorigo-api` 提供 Bearer JSON API（召回、写入、上下文、画像、导出、维护、删除）。默认本机 `127.0.0.1:8788`。没有单独的 OpenAPI 文件。
+9. **REST**：✅ `cmd/memorigo-api` 提供 Bearer JSON API（召回、写入、规则、上下文、画像、导出、维护、删除）。默认本机 `127.0.0.1:8788`。没有单独的 OpenAPI 文件。
 
 ---
 
@@ -311,6 +311,7 @@ pkg, err := m.BuildContext(ctx, "what does the user prefer?", ContextOptions{
 memory_search(query, limit?, entity_id?)
 memory_context(query, budget?, include_raw?, fact_limit?, raw_limit?, entity_id?)
 memory_remember(content, entity_id?)
+memory_rule(content, entity_id?)
 memory_forget(id, entity_id?)
 memory_profile(limit?, entity_id?)
 memory_stats(entity_id?)
@@ -332,7 +333,7 @@ memory_stats(entity_id?)
 | # | 事项 | Impact | Effort | 前置条件 |
 |---|---|---|---|---|
 | P2-1 | 实体解析 + 1-hop 图扩展 | 3 | 高 | 评测证明多跳/关联子集有增益 |
-| P2-2 | 程序性记忆（规则/提示片段） | 3 | 中 | 有可回滚的写入与审计 |
+| P2-2 | **程序性记忆**（✅ `RememberRule`：明文规则进常驻画像的 Rules，`Forget` 撤回。不执行规则，也不做规划器） | 3 | 中 | 有可回滚的写入与审计 |
 | P2-3 | 多 agent 共享记忆（命名空间 + 信任分级） | 3 | 高 | 多租户与写权限先完成 |
 | P2-4 | 多模态记忆（图片/音频摘要） | 2 | 高 | 有明确的存储与检索协议 |
 | P2-5 | 自适应检索（是否检索、几轮、改写） | 3 | 中 | 混合 + rerank 已稳定 |
@@ -375,7 +376,7 @@ memory_stats(entity_id?)
 
 ### 第 9–12 周：分发与治理
 
-- MCP stdio + Streamable HTTP + Bearer 鉴权已交付（六个工具、只读、entity 作用域、集成测试）。
+- MCP stdio + Streamable HTTP + Bearer 鉴权已交付（七个工具，含 `memory_rule`、只读、entity 作用域、集成测试）。
 - 应用层 `org_id/app_id`、导出与硬删除已交付。待做：数据库 RLS。
 - 静态工具授权、进程内配额与 JSONL 审计已交付。待做：OAuth、OTel span/metrics 与成本核算。
 

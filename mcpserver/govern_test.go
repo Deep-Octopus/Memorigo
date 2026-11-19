@@ -22,6 +22,10 @@ func TestParseScopes(t *testing.T) {
 	if got != want {
 		t.Fatalf("scopes = %s", got)
 	}
+	write, err := mcpserver.ParseScopes("write")
+	if err != nil || !strings.Contains(strings.Join(write, ","), "memory_rule") {
+		t.Fatalf("write scopes = %v, %v", write, err)
+	}
 	if _, err := mcpserver.ParseScopes("drop"); err == nil {
 		t.Fatal("expected unknown scope error")
 	}
@@ -46,7 +50,7 @@ func TestScopeHidesWriteTools(t *testing.T) {
 			t.Fatalf("missing %s in %v", name, seen)
 		}
 	}
-	if seen["memory_remember"] || seen["memory_forget"] {
+	if seen["memory_remember"] || seen["memory_forget"] || seen["memory_rule"] {
 		t.Fatalf("write tools were advertised: %v", seen)
 	}
 	if _, err := callTool(t, session, "memory_stats", map[string]any{}); err != nil {

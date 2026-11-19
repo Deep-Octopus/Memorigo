@@ -49,6 +49,7 @@ func NewHandler(m *memori.Memori, opts Options) (http.Handler, error) {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("POST /v1/recall", s.recall)
 	mux.HandleFunc("POST /v1/remember", s.remember)
+	mux.HandleFunc("POST /v1/rules", s.rule)
 	mux.HandleFunc("POST /v1/forget", s.forget)
 	mux.HandleFunc("POST /v1/restore", s.restore)
 	mux.HandleFunc("POST /v1/context", s.context)
@@ -145,6 +146,27 @@ func (s *server) remember(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withEntity(w, r, body.EntityID, func() error {
 		id, err := s.m.Remember(body.Content)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": id})
+		return nil
+	})
+}
+
+func (s *server) rule(w http.ResponseWriter, r *http.Request) {
+	if s.readOnly(w) {
+		return
+	}
+	var body struct {
+		Content  string `json:"content"`
+		EntityID string `json:"entity_id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	s.withEntity(w, r, body.EntityID, func() error {
+		id, err := s.m.RememberRule(body.Content)
 		if err != nil {
 			return err
 		}

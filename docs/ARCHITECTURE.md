@@ -73,14 +73,14 @@ flowchart TB
 | 增强 | `memori/augmentation.go` | 有界队列、worker、重试、抽取、嵌入、冲突消解、摘要 |
 | 抽取 | `memori/extractor.go` | 启发式（中英）与 LLM 严格 JSON 两种实现 |
 | 排序 | `memori/scoring.go` | BM25、余弦、新近度、频率、闸门、加权融合或 RRF |
-| 上下文 | `memori/context.go` / `memori/profile.go` | Profile + 事实 + 原始消息三通道、MMR、token 预算、覆盖率、引用、裁剪 |
+| 上下文 | `memori/context.go` / `memori/profile.go` | Profile + 事实 + 原始消息三通道、MMR、token 预算、覆盖率、引用、裁剪。`procedure` 槽进入常驻 Rules |
 | 注入 | `memori/memory_prompt.go` | 查询提取、`BuildContext`、模板渲染、消息插入 |
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |
 | 嵌入 | `embed/` | hash / OpenAI / 硅基流动 / Ollama、可选 HTTP rerank、LRU、HTTP 重试 |
 | HTTP API | `api/`、`cmd/memorigo-api` | Bearer JSON。`/healthz` 不鉴权。默认 `127.0.0.1:8788` |
 | 框架适配 | `adapter/`、`examples/adapter` | 调用 `BuildContext` 后插入一条 system 消息。不写回记忆，不依赖 Eino / Genkit |
 | 文本 | `textutil/` | 归一化、分词、CJK bigram、句子切分、token 估算 |
-| MCP | `mcpserver/` | 六个记忆工具、静态 scope、进程内配额、JSONL 审计、stdio 与 stateless Streamable HTTP |
+| MCP | `mcpserver/` | 七个记忆工具、静态 scope、进程内配额、JSONL 审计、stdio 与 stateless Streamable HTTP |
 | 评测 | `eval/` | 确定性场景、full-context / naive RAG want 命中率、报告、JSON 输出 |
 
 ---
@@ -351,13 +351,14 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 
 ### 7.6 MCP 适配
 
-`mcpserver.New(m, opts)` 返回 `*mcp.Server`，注册六个工具：
+`mcpserver.New(m, opts)` 返回 `*mcp.Server`，注册七个工具：
 
 | 工具 | 调用 |
 |---|---|
 | `memory_search` | `Recall(query, limit)` |
 | `memory_context` | `BuildContext(query, options)`；Profile 默认开启，可关 |
 | `memory_remember` | `Remember(content)` |
+| `memory_rule` | `RememberRule(content)`；明文规则，不执行 |
 | `memory_forget` | `Forget(id)` |
 | `memory_profile` | `Profile(options)`；返回分组 sections + 渲染文本 |
 | `memory_stats` | `Stats(ctx)` |
@@ -367,7 +368,7 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - 工具参数内嵌可选 `entity_id`；每次调用先 `TryAttribution(entity, process)`，未提供时使用服务默认 entity。
 - 归因是 `Memori` 级配置，因此工具 handler 用互斥锁串行化，避免并发请求把 A 的查询落到 B 的作用域。
 - `ReadOnly` 只拦截写工具；迁移仍会在启动时执行（需要可写库文件）。
-- `Scopes` 为空表示六个工具都注册。非空时未授权的工具不会出现在 `tools/list`。别名 `read` / `write` / `all` 在启动时展开。这不是 OAuth，也不能按 token 临时改权限。
+- `Scopes` 为空表示七个工具都注册。非空时未授权的工具不会出现在 `tools/list`。别名 `read` / `write` / `all` 在启动时展开。这不是 OAuth，也不能按 token 临时改权限。
 - `QuotaPerMinute` 是本进程的一分钟滑动窗口，0 为不限制，上限 100000。超限返回错误，不执行记忆操作。窗口不跨进程。
 - `Audit` 每条工具调用追加一行 JSON：时间、工具、entity、结果、耗时。不写查询词，也不写记忆正文。写日志失败只打 stderr，不回滚已经完成的记忆操作。
 - 返回值是 JSON 文本 + 结构化内容；记忆正文按不可信数据处理。

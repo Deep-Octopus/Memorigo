@@ -468,11 +468,32 @@ type RememberOptions struct {
 	Confidence float64
 }
 
+// ProcedureSlot is the non-exclusive slot used by RememberRule. These facts
+// stay in the always-on profile under Rules. They are plain text, not code.
+const ProcedureSlot = "procedure"
+
 // Remember stores an explicit long-term fact synchronously. It applies the
 // same slot reconciliation as automatic extraction, so remembering a new home
 // city supersedes the old one.
 func (m *Memori) Remember(content string) (int64, error) {
 	return m.RememberWith(content, RememberOptions{})
+}
+
+// RememberRule stores a standing instruction for this subject. Unlike
+// Remember, it does not run extraction, so the sentence is not reclassified
+// into a profile or preference slot. Several rules can be active together.
+// Forget rolls one back. The text is data for the agent, not an executed program.
+func (m *Memori) RememberRule(content string) (int64, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return 0, ErrEmptyContent
+	}
+	return m.rememberCandidates([]CandidateFact{{
+		Content:    content,
+		Slot:       ProcedureSlot,
+		AssertedBy: "user",
+		Confidence: 1,
+	}})
 }
 
 // RememberWith is Remember with explicit provenance.
@@ -487,23 +508,6 @@ func (m *Memori) RememberWith(content string, opts RememberOptions) (int64, erro
 	if err := m.Err(); err != nil {
 		return 0, err
 	}
-	repos, err := m.repos()
-	if err != nil {
-		return 0, err
-	}
-	snap := m.Config.snapshot()
-	if snap.EntityID == "" {
-		return 0, ErrNoAttribution
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
-	defer cancel()
-
-	entityID, err := m.ids.entity(ctx, repos, entityKey(snap))
-	if err != nil {
-		return 0, err
-	}
-
 	candidates := extractCandidatesFromText(content)
 	if len(candidates) == 0 {
 		candidates = []CandidateFact{{Content: content}}
@@ -515,6 +519,30 @@ func (m *Memori) RememberWith(content string, opts RememberOptions) (int64, erro
 		if opts.Confidence > 0 {
 			candidates[i].Confidence = opts.Confidence
 		}
+	}
+	return m.rememberCandidates(candidates)
+}
+
+func (m *Memori) rememberCandidates(candidates []CandidateFact) (int64, error) {
+	if m.closed.Load() {
+		return 0, ErrClosed
+	}
+	if err := m.Err(); err != nil {
+		return 0, err
+	}
+	repos, err := m.repos()
+	if err != nil {
+		return 0, err
+	}
+	snap := m.Config.snapshot()
+	if snap.EntityID == "" {
+		return 0, ErrNoAttribution
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
+	defer cancel()
+	entityID, err := m.ids.entity(ctx, repos, entityKey(snap))
+	if err != nil {
+		return 0, err
 	}
 	ids, err := m.Augmentation.storeFacts(ctx, entityID, nil, candidates, true)
 	if err != nil {
