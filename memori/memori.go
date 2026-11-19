@@ -389,6 +389,16 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 		} else {
 			candidates = mergeFactResults(candidates, lexical)
 		}
+		if len(queryEmbedding) > 0 {
+			if similar, ok := repos.EntityFact().(storage.SimilarFactSearcher); ok {
+				hits, simErr := similar.SearchSimilar(ctx, entityID, queryEmbedding, lexicalLimit)
+				if simErr != nil {
+					// MEMORI_PGVECTOR=on is the only mode that returns this error.
+					return nil, simErr
+				}
+				candidates = mergeFactResults(candidates, hits)
+			}
+		}
 	}
 	candidates = visibleFacts(candidates, snap.Recall.IncludeInferred)
 

@@ -269,6 +269,8 @@ Enqueue (non-blocking)
 
 `Candidates(entityID, scanLimit)` 取活跃事实，按新近度/频率排序，默认上限 2000。排序在 Go 内完成，避免把排序逻辑下推到三种存储。
 
+PostgreSQL 上，`MEMORI_PGVECTOR=auto`（默认）在 `vector` 扩展已经安装、且 `content_embedding_vec` 的维度与当前嵌入一致时，用 HNSW 余弦近邻再补一批候选，然后仍交给同一套 Go 排序。驱动不安装扩展，也不把这一列写进版本化迁移（schema 仍是 5）。扩展不在、维度不一致、或设为 `off` 时，稠密召回保持上面的有界扫描。`on` 在扩展缺失或维度不一致时返回错误。SQLite 忽略该变量。`modernc.org/sqlite` 不能加载 `vec0`，默认构建不引入 cgo。
+
 ### 7.2 信号
 
 **余弦**：`dot / (||a|| * ||b||)`，clamp 后映射到 `[0,1]`（负值截断为 0）。

@@ -78,7 +78,10 @@ func (d *SQLDriver) Migrate() error {
 	currentVersion := d.getSchemaVersion()
 	maxVersion := maxSQLMigrationVersion(migrations)
 	if currentVersion >= maxVersion {
-		return d.backfillSearchText()
+		if err := d.backfillSearchText(); err != nil {
+			return err
+		}
+		return d.requirePGVector()
 	}
 
 	tx, err := d.a.DB.Begin()
@@ -113,7 +116,10 @@ func (d *SQLDriver) Migrate() error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return d.backfillSearchText()
+	if err := d.backfillSearchText(); err != nil {
+		return err
+	}
+	return d.requirePGVector()
 }
 
 // backfillSearchText fills the lexical document for rows written before the

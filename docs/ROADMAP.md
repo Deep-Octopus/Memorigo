@@ -169,7 +169,7 @@ eval/
 ### 仍缺
 
 1. **外部评测**：✅ 内置场景上的 full-context（最近窗口）与 naive RAG（hash 余弦 top-k）已对照 want 字符串出命中率。✅ `eval/datasets/download.sh` 下载 LongMemEval oracle 并校验 SHA-256，文件不进仓库。缺失时内置 16 场景仍决定退出码。`-external-limit` 不是论文分数。✅ LLM-judge 为可选 HTTP，默认关闭，不改变通过与否，也不在同步写路径。没有 LoCoMo，也没有人工抽检。
-2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。稠密检索仍是有界扫描；pgvector HNSW 仍未接（`modernc` 不能加载 `vec0`，默认构建保持纯 Go）。
+2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。✅ PostgreSQL 在 vector 扩展已经安装且维度一致时，用 HNSW 余弦索引补充稠密候选（`MEMORI_PGVECTOR`，默认 auto）。驱动不安装扩展，schema 仍是版本 5。SQLite 仍是有界扫描；`modernc` 不能加载 `vec0`，默认构建保持纯 Go，没有 cgo。
 3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
 5. **MCP 生产治理**：✅ 静态工具授权、进程内每分钟配额、JSONL 审计（不含记忆正文）。仍没有 OAuth，配额不跨进程，也没有 OTel。
@@ -189,7 +189,7 @@ eval/
 | # | 事项 | Impact | Effort | 验收信号 |
 |---|---|---|---|---|
 | P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付；✅ 内置语料上的 full-context 与 naive RAG want 命中率。✅ LongMemEval oracle 下载脚本与校验和，数据不进仓库。✅ 可选 HTTP judge，默认关闭，不改变通过与否。抽样不是论文分数） | 5 | 中 | 一条命令产出 accuracy/latency/token 报告；配置可复现 |
-| P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引；稠密仍是有界扫描，pgvector 未接） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
+| P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引。✅ 可选 pgvector HNSW：仅当扩展已安装且维度匹配；不安装扩展；SQLite 有界扫描与纯 Go 构建不变） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
 | P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付；✅ HTTP rerank 默认关闭，失败回退加权/RRF 顺序。没有内置 cross-encoder） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
 | P0-4 | **时态 v3：valid_from/valid_to + source_message_id**（✅ 已交付） | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
 | P0-5 | **多租户最小闭环**（✅ 应用层 org/app 隔离已交付；数据库 RLS 未做） | 5 | 中 | `org_id/app_id` 进入 schema；跨租户泄漏测试为 0 |
@@ -212,12 +212,7 @@ CREATE VIRTUAL TABLE memori_fact_fts USING fts5(
 );
 ```
 
-**PostgreSQL**：新增 `vector(n)` / `halfvec(n)` 列与 HNSW 索引（pgvector-go 纯 Go，无需 cgo）：
-
-```sql
-ALTER TABLE memori_entity_fact ADD COLUMN embedding vector(1536);
-CREATE INDEX ON memori_entity_fact USING hnsw (embedding vector_cosine_ops);
-```
+**PostgreSQL**：✅ 可选。`MEMORI_PGVECTOR=auto`（默认）在扩展已经安装、且列维度与本次嵌入一致时，才增加 `content_embedding_vec vector(N)` 并建 HNSW（`vector_cosine_ops`）。N 取第一次见到的嵌入维度。这一列不写进版本化迁移，驱动也不安装扩展。邻居只并入候选，排序仍在 Go。维度不一致时 auto 退回有界扫描，`on` 返回错误。没有使用 pgvector-go。SQLite 与 `CGO_ENABLED=0` 不变。
 
 **Repos 扩展**：
 
@@ -362,11 +357,11 @@ memory_stats(entity_id?)
 - 已输出表格式与 JSON 报告（accuracy / P95 / token）。
 - 内置语料的 full-context 与 naive RAG want 命中率已交付。LongMemEval oracle 有下载脚本和 SHA-256，JSON 不进仓库。可选 HTTP judge 默认关闭。仍没有私有场景，抽样也不是论文分数。
 
-### 第 3–5 周：检索升级（下一步）
+### 第 3–5 周：检索升级（词法与可选 HNSW 已接，SQLite ANN 未做）
 
-- SQLite FTS5（纯 Go）+ 可选 `gosqlite`/cgo `vec0`；PG pgvector + HNSW。
-- `FactSearchRepo` + RRF；保留加权融合开关。
-- 用评测对比 recall@k、P95、token/query。
+- ✅ SQLite FTS5、Postgres GIN、Mongo token 索引；✅ 可选 RRF，加权融合仍是默认。
+- ✅ PostgreSQL：扩展已存在且维度一致时才用 HNSW。驱动不安装扩展。SQLite 稠密路径仍是有界扫描，没有 cgo `vec0`。
+- 用评测对比 recall@k、P95、token/query。这项对照还没有做。
 
 ### 第 6–8 周：时态与上下文
 

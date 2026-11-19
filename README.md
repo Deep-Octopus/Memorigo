@@ -380,7 +380,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `Recall` (top-5) | ~11 ms | ~5.5 MB | ~40k |
 | `BuildContext` (800-token) | ~11 ms | ~5.5 MB | ~40k |
 
-当前召回是候选集扫描 + Go 内打分，行为可预测、无需外部索引；ANN / FTS5 + RRF 是下一阶段的性能升级。评测方法与局限见 [docs/EVALUATION.md](docs/EVALUATION.md)。
+默认召回仍是候选集扫描加 Go 内打分。词法候选走 FTS5 / GIN，也可以改用 RRF。PostgreSQL 在已经安装 vector 扩展、且列维度与嵌入一致时，用 HNSW 再补一批稠密候选；驱动不安装扩展。SQLite 仍是有界扫描，默认构建不引入 cgo。评测方法与局限见 [docs/EVALUATION.md](docs/EVALUATION.md)。
 
 ---
 
@@ -459,6 +459,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_RERANK_URL` | — | 完整 rerank 端点，如 `https://api.jina.ai/v1/rerank` |
 | `MEMORI_RERANK_MODEL` | — | 如 `BAAI/bge-reranker-v2-m3` |
 | `MEMORI_RERANK_TOP_N` | HTTP 时 `20`，否则 `0` | 送去重排的候选数。`0` 关闭 |
+| `MEMORI_PGVECTOR` | `auto` | `on` 要求 PostgreSQL 已安装 vector 扩展；`off` 关闭；`auto` 在扩展已安装且维度一致时用 HNSW，否则保持有界扫描。驱动不安装扩展。SQLite 忽略该变量 |
 
 完整列表见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与源码 `memori/config.go`。
 
@@ -557,12 +558,13 @@ docs/         架构、MCP、评测、路线图
 - 框架无关适配：`adapter.Apply` 只改发往模型的消息副本
 - 自适应检索：问候、空查询、已被前文覆盖的查询跳过事实召回；开头寒暄会先去掉。不调用模型，也不做多轮检索
 - 外部评测：LongMemEval oracle 的下载脚本和 SHA-256。数据集不在仓库里。可选 HTTP judge 默认关闭，不改变通过与否，也不在同步写路径
+- 可选 pgvector：PostgreSQL 在 vector 扩展已安装且维度一致时，用 HNSW 补充稠密候选。驱动不安装扩展。SQLite 仍是有界扫描，默认构建仍是纯 Go
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
-1. 数据库 RLS、OAuth、OTel。PostgreSQL 上的 pgvector 仅在扩展存在时才考虑。稠密 ANN 仍不默认引入 cgo
-2. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。`-external-limit` 不是 LongMemEval 论文分数。
+1. 数据库 RLS、OAuth、OTel。各自加在现有 Bearer、应用层 org/app、JSONL 审计之上，不替换它们
+2. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。`-external-limit` 不是 LongMemEval 论文分数。稠密 ANN 仍不默认引入 cgo
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -570,7 +572,7 @@ docs/         架构、MCP、评测、路线图
 
 ## 已知边界
 
-- 召回目前是候选集 + Go 内打分，没有 ANN 索引；1,000 条事实约 10–11 ms，规模更大时请关注延迟并等待 ANN/FTS5。
+- 默认稠密召回是有界扫描加 Go 内打分。`MEMORI_PGVECTOR=auto` 只在 PostgreSQL 已安装 vector 扩展、且列维度与当前嵌入一致时使用 HNSW。驱动不安装扩展。维度不一致时 auto 退回扫描，`on` 报错。SQLite 忽略该变量。1,000 条事实的扫描大约 10–11 ms。默认构建仍是纯 Go。
 - 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
 - `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
 - 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里。LLM-judge 需显式设置 `MEMORI_EVAL_JUDGE`，默认关闭，且不改变这 16 个场景的通过与否。

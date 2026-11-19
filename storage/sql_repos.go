@@ -380,7 +380,13 @@ RETURNING id`,
 		now, nullableInt64(in.SourceMessageID), confidence, assertedBy,
 		in.PreserveInactive, in.PreserveInactive, in.PreserveInactive,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	if syncErr := r.syncPGVector(ctx, id, in.Embedding); syncErr != nil {
+		return id, syncErr
+	}
+	return id, nil
 }
 
 func (r *sqlEntityFactRepo) Touch(ctx context.Context, factID int64) error {
@@ -767,7 +773,10 @@ func (r *sqlEntityFactRepo) UpdateEmbedding(ctx context.Context, factID int64, e
 		sqlPlaceholder(r.dialect, 3), sqlPlaceholder(r.dialect, 4), sqlPlaceholder(r.dialect, 5),
 	)
 	_, err := r.q.ExecContext(ctx, query, embedding, model, dim, time.Now(), factID)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.syncPGVector(ctx, factID, embedding)
 }
 
 // sqlReposBundle wires repository implementations against a shared querier.
