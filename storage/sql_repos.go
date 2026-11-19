@@ -778,6 +778,7 @@ type sqlReposBundle struct {
 	conversation *sqlConversationRepo
 	message      *sqlMessageRepo
 	entityFact   *sqlEntityFactRepo
+	subject      *sqlSubjectRepo
 }
 
 func newSQLRepos(q sqlQuerier, dialect string) Repos {
@@ -788,6 +789,7 @@ func newSQLRepos(q sqlQuerier, dialect string) Repos {
 		conversation: &sqlConversationRepo{q: q, dialect: dialect},
 		message:      &sqlMessageRepo{q: q, dialect: dialect},
 		entityFact:   &sqlEntityFactRepo{q: q, dialect: dialect},
+		subject:      &sqlSubjectRepo{q: q, dialect: dialect},
 	}
 }
 
@@ -797,3 +799,4 @@ func (b *sqlReposBundle) Session() SessionRepo           { return b.session }
 func (b *sqlReposBundle) Conversation() ConversationRepo { return b.conversation }
 func (b *sqlReposBundle) Message() MessageRepo           { return b.message }
 func (b *sqlReposBundle) EntityFact() EntityFactRepo     { return b.entityFact }
+func (b *sqlReposBundle) Subject() SubjectRepo           { return b.subject }

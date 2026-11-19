@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Deep-Octopus/Memorigo/pii"
 	"github.com/Deep-Octopus/Memorigo/storage"
 	"github.com/Deep-Octopus/Memorigo/textutil"
 )
@@ -185,6 +186,9 @@ func (m *AugmentationManager) processInput(in AugmentationInput) error {
 			m.m.logger.Warn("failed to read conversation summary", "error", getErr)
 		}
 		summary := mergeSummary(existing, extraction.Summary)
+		if snap.Privacy.Redact {
+			summary = pii.Redact(summary)
+		}
 		if err := repos.Conversation().UpdateSummary(ctx, in.ConversationID, summary); err != nil {
 			m.m.logger.Warn("failed to update conversation summary", "error", err)
 		}
@@ -225,6 +229,9 @@ func (m *AugmentationManager) storeFacts(ctx context.Context, entityID int64, so
 		content := cleanSentence(c.Content)
 		if content == "" {
 			continue
+		}
+		if m.m.Config.snapshot().Privacy.Redact {
+			content = pii.Redact(content)
 		}
 		key := textutil.Key(content)
 		if key == "" {

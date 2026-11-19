@@ -108,6 +108,7 @@ type Config struct {
 	Recall     RecallConfig
 	Rerank     RerankConfig
 	Profile    ProfileConfig
+	Privacy    PrivacyConfig
 	Storage    StorageConfig
 	LLM        LLMConfig
 }
@@ -129,6 +130,7 @@ type configSnapshot struct {
 	Extraction    ExtractionConfig
 	Recall        RecallConfig
 	Profile       ProfileConfig
+	Privacy       PrivacyConfig
 }
 
 func newConfig() *Config {
@@ -185,6 +187,9 @@ func newConfig() *Config {
 			Limit:          envInt("MEMORI_PROFILE_LIMIT", 40),
 			IncludeDynamic: envBool("MEMORI_PROFILE_DYNAMIC", false),
 		},
+		Privacy: PrivacyConfig{
+			Redact: envBool("MEMORI_PII_REDACT", false),
+		},
 	}
 	return c
 }
@@ -208,6 +213,7 @@ func (c *Config) snapshot() configSnapshot {
 		Extraction:    c.Extraction,
 		Recall:        c.Recall,
 		Profile:       c.Profile,
+		Privacy:       c.Privacy,
 	}
 }
 

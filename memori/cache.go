@@ -28,6 +28,18 @@ func newIDCache() *idCache {
 	}
 }
 
+func (c *idCache) forgetEntity(externalID string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.entities, externalID)
+	// Session rows for the deleted entity are gone. Drop every cached session
+	// id so the next write does not reuse a removed primary key.
+	c.sessions = make(map[uuid.UUID]int64)
+	c.mu.Unlock()
+}
+
 func (c *idCache) entity(ctx context.Context, repos storage.Repos, externalID string) (int64, error) {
 	c.mu.Lock()
 	if id, ok := c.entities[externalID]; ok {

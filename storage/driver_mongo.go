@@ -39,6 +39,7 @@ func (d *MongoDriver) Session() SessionRepo           { return d.baseRepos().Ses
 func (d *MongoDriver) Conversation() ConversationRepo { return d.baseRepos().Conversation() }
 func (d *MongoDriver) Message() MessageRepo           { return d.baseRepos().Message() }
 func (d *MongoDriver) EntityFact() EntityFactRepo     { return d.baseRepos().EntityFact() }
+func (d *MongoDriver) Subject() SubjectRepo           { return d.baseRepos().Subject() }
 
 // Transaction runs fn against the Mongo repositories. Standalone MongoDB does
 // not support multi-document transactions, so the callback is not atomic;

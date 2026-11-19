@@ -20,6 +20,7 @@ type Repos interface {
 	Conversation() ConversationRepo
 	Message() MessageRepo
 	EntityFact() EntityFactRepo
+	Subject() SubjectRepo
 }
 
 // Transactional is implemented by drivers that can run a repository bundle in
@@ -158,4 +159,40 @@ type EntityFactRepo interface {
 	Expire(ctx context.Context, entityID int64, factIDs []int64, at time.Time) error
 	// Restore reactivates an expired fact. Superseded and deleted facts stay closed.
 	Restore(ctx context.Context, entityID int64, factID int64) error
+}
+
+// SubjectFact is one stored fact of any status, without its embedding.
+type SubjectFact struct {
+	ID                   int64
+	Content              string
+	Slot                 string
+	Status               string
+	NumTimes             int64
+	DateLastTime         time.Time
+	ValidFrom            time.Time
+	ValidTo              *time.Time
+	SourceMessageID      *int64
+	SourceConversationID *int64
+	Confidence           float64
+	AssertedBy           string
+}
+
+// DeletionReport counts rows removed by a hard delete. Process rows are kept
+// because they name the agent, not the person.
+type DeletionReport struct {
+	Facts         int64
+	Messages      int64
+	Conversations int64
+	Sessions      int64
+	GraphEdges    int64
+	Entities      int64
+}
+
+// SubjectRepo exports and hard-deletes one entity's memory. Shared process
+// rows stay. Knowledge-graph vocabulary rows are removed only when no entity
+// still references them.
+type SubjectRepo interface {
+	Facts(ctx context.Context, entityID int64) ([]SubjectFact, error)
+	Messages(ctx context.Context, entityID int64) ([]StoredMessage, error)
+	Delete(ctx context.Context, entityID int64) (DeletionReport, error)
 }

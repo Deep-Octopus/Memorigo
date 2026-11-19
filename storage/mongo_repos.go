@@ -824,6 +824,7 @@ type mongoReposBundle struct {
 	conversation *mongoConversationRepo
 	message      *mongoMessageRepo
 	entityFact   *mongoEntityFactRepo
+	subject      *mongoSubjectRepo
 }
 
 func newMongoRepos(db *mongo.Database) Repos {
@@ -834,6 +835,7 @@ func newMongoRepos(db *mongo.Database) Repos {
 		conversation: &mongoConversationRepo{db: db},
 		message:      &mongoMessageRepo{db: db},
 		entityFact:   &mongoEntityFactRepo{db: db},
+		subject:      &mongoSubjectRepo{db: db},
 	}
 }
 
@@ -843,3 +845,4 @@ func (b *mongoReposBundle) Session() SessionRepo           { return b.session }
 func (b *mongoReposBundle) Conversation() ConversationRepo { return b.conversation }
 func (b *mongoReposBundle) Message() MessageRepo           { return b.message }
 func (b *mongoReposBundle) EntityFact() EntityFactRepo     { return b.entityFact }
+func (b *mongoReposBundle) Subject() SubjectRepo           { return b.subject }

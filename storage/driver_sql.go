@@ -44,6 +44,7 @@ func (d *SQLDriver) Session() SessionRepo           { return d.baseRepos().Sessi
 func (d *SQLDriver) Conversation() ConversationRepo { return d.baseRepos().Conversation() }
 func (d *SQLDriver) Message() MessageRepo           { return d.baseRepos().Message() }
 func (d *SQLDriver) EntityFact() EntityFactRepo     { return d.baseRepos().EntityFact() }
+func (d *SQLDriver) Subject() SubjectRepo           { return d.baseRepos().Subject() }
 
 // Transaction runs fn inside a database transaction. Repositories handed to fn
 // are bound to the transaction; any error rolls the whole unit back.

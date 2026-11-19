@@ -439,6 +439,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_EXTRACTION_MODEL` | 最近一次聊天模型 | LLM 抽取模型 |
 | `MEMORI_EXTRACTION_MAX_FACTS` | `20` | 单轮最多事实数 |
 | `MEMORI_EXTRACTION_MERGE_THRESHOLD` | `0.97` | 无语义槽位事实的近重复阈值 |
+| `MEMORI_PII_REDACT` | `false` | 写入前遮盖邮箱、电话和通过 Luhn 的卡号 |
 
 ### 召回
 
@@ -475,6 +476,10 @@ m.Forget(factID)
 report, _ := m.Maintain(memori.MaintainOptions{TTL: 90 * 24 * time.Hour, ProtectTimes: 2})
 _ = report
 m.Restore(factID) // 只重新打开 status=expired
+exported, _ := m.Export(memori.ExportOptions{Redact: true})
+_ = exported
+report, _ := m.DeleteSubject() // 硬删除当前主体；再次调用是空操作
+_ = report
 
 // 读取
 facts, _ := m.Recall("seat preference", 5)
@@ -533,7 +538,7 @@ docs/         架构、MCP、评测、路线图
 2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
 3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
 4. 多租户（org/app）+ RLS + 导出/删除合规
-5. 隐私导出/删除、REST API、MCP 配额与审计
+5. REST API、MCP 配额与审计、评测三基线
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

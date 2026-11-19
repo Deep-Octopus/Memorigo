@@ -133,6 +133,10 @@ func (w *Writer) executeTransaction(ctx context.Context, repos storage.Repos, pa
 		processID = &id
 	}
 
+	if snap.Privacy.Redact {
+		payload = redactConversation(payload)
+	}
+
 	sessionID, err := repos.Session().Create(ctx, entityID, processID, snap.SessionID)
 	if err != nil {
 		return 0, nil, false, err

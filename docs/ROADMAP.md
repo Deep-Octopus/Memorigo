@@ -175,7 +175,8 @@ eval/
 5. **MCP 生产治理**：HTTP 已有 Bearer 鉴权和 TLS 入口，但没有 OAuth、按工具授权、配额与审计日志。
 6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
 7. **本地嵌入/重排**：✅ Ollama `POST /api/embed` 与可选 HTTP rerank（默认关闭）。没有 ONNX，也没有把模型打进二进制；Ollama 需要本机已经拉好模型。
-8. **REST 服务层**：MCP 已覆盖 Agent 客户端，通用 HTTP API 尚未提供。
+8. **隐私**：✅ `Export`（版本 1 JSON）与 `DeleteSubject` 硬删除。`MEMORI_PII_REDACT` 默认关闭，只遮邮箱、电话和通过 Luhn 的卡号。不是 crypto-shredding，也不是数据库 RLS。
+9. **REST 服务层**：MCP 已覆盖 Agent 客户端，通用 HTTP API 尚未提供。
 
 ---
 
@@ -266,7 +267,7 @@ asserted_by       TEXT NOT NULL DEFAULT 'user'  -- user / assistant / inferred
 | P1-4 | **框架适配**：Eino / Genkit 薄适配 | 3 | 低 | 示例可运行；不绑定框架抽象 |
 | P1-5 | **巩固/遗忘**（✅ `Maintain`/`Restore`：TTL + 提及次数保护，可 dry-run、可恢复；无 LLM 摘要、无自动调度） | 3 | 中 | 过期事实离开召回，`Restore` 后回来；高频事实保留 |
 | P1-6 | **本地嵌入 / reranker**（✅ Ollama HTTP 嵌入，模型名由 `MEMORI_EMBEDDING_MODEL` 锁定；HTTP rerank 默认关闭。无 API key 时仍走 hash） | 3 | 低到中 | 无 API key 可运行；模型版本由调用方固定 |
-| P1-7 | **隐私与合规**：PII 脱敏、导出、crypto-shredding | 4 | 中 | 删除可证明；导出格式稳定 |
+| P1-7 | **隐私与合规**（✅ 导出 v1 + 硬删除 + 可选 PII 正则。未做 crypto-shredding，未做 RLS） | 4 | 中 | 删除后本主体行数为 0，其他主体仍在；导出 JSON 版本稳定 |
 
 #### P1-1 已交付 API
 
@@ -375,7 +376,7 @@ memory_stats(entity_id?)
 ### 第 9–12 周：分发与治理
 
 - MCP stdio + Streamable HTTP + Bearer 鉴权已交付（六个工具、只读、entity 作用域、集成测试）。
-- 待做：`org_id/app_id`、RLS/查询过滤、导出/删除。
+- 应用层 `org_id/app_id`、导出与硬删除已交付。待做：数据库 RLS。
 - 待做：OAuth/按工具授权、OTel span/metrics 与成本核算。
 
 ---
