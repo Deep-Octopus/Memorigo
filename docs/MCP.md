@@ -79,6 +79,9 @@ Useful flags:
 -entity     default entity id (default mcp-user)
 -process    provenance process id (default memorigo-mcp)
 -readonly   disable memory_remember and memory_forget
+-scopes     tool allow-list (empty = all). Aliases: read, write, all
+-quota      max tool calls per minute in this process (0 = unlimited)
+-audit      append-only JSONL audit log (empty = off)
 ```
 
 Example read-only configuration:
@@ -132,6 +135,9 @@ HTTP flags and environment variables:
 | `-allow-anonymous` | `MEMORI_MCP_ALLOW_ANONYMOUS` | `false` | trusted loopback only |
 | `-path` | `MEMORI_MCP_PATH` | `/mcp` | MCP endpoint |
 | `-tls-cert` / `-tls-key` | `MEMORI_MCP_TLS_CERT` / `..._KEY` | — | direct TLS |
+| `-scopes` | `MEMORI_MCP_SCOPES` | empty (all tools) | `read`, `write`, `all`, or tool names. Omitted tools are not listed |
+| `-quota` | `MEMORI_MCP_QUOTA` | `0` (unlimited) | per-process calls per minute, max 100000 |
+| `-audit` | `MEMORI_MCP_AUDIT_LOG` | empty (off) | JSONL path. No query text and no memory text |
 
 If both a token and `-allow-anonymous` are set, the token is still required:
 anonymous mode only permits an empty token.
@@ -149,8 +155,9 @@ There are three supported deployment shapes:
 The server logs a warning when HTTP is not using TLS. A reverse proxy may
 preserve a public `Host` header; cross-site browser requests are rejected by
 cross-origin protection, while non-browser MCP clients still work. The server
-does not implement OAuth or per-tool authorization; use network isolation and a
-reverse proxy for multi-user deployments.
+does not implement OAuth. Tool authorization is a static allow-list chosen at
+startup, the quota counts calls in this process only, and the audit log is a
+local JSONL file. Use network isolation for multi-user deployments.
 
 ---
 
@@ -181,6 +188,27 @@ export MEMORI_PROFILE_DYNAMIC=false
 When `MEMORI_EMBEDDING_PROVIDER=hash`, the server is fully offline. This is the
 default and is suitable for local agents, tests and air-gapped deployments.
 
+### Scopes, quota and audit
+
+`-scopes read` advertises search, context, profile and stats. `-scopes write`
+advertises remember and forget. `-readonly` still lists the write tools and
+rejects the call. An empty `-scopes` allows every tool.
+
+`-quota 60` allows 60 tool calls in a sliding minute inside this process.
+A denied call returns `memorigo MCP quota exceeded` and does not touch memory.
+The counter resets as calls age out. It is not a cluster quota.
+
+`-audit /var/log/memorigo/mcp.jsonl` appends one JSON object per handled call:
+
+```json
+{"time":"2026-11-19T00:00:00Z","tool":"memory_search","entity_id":"alice","outcome":"ok","duration_us":800}
+```
+
+`outcome` is `ok`, `readonly`, `forbidden`, `quota`, `invalid` or `error`.
+The file mode is `0600` when this process creates it. Query text and memory
+text are omitted. If the append fails, the memory operation still stands and
+the failure is written to stderr.
+
 ---
 
 ## Operational checklist
@@ -205,5 +233,7 @@ default and is suitable for local agents, tests and air-gapped deployments.
 | `401 unauthorized` | missing/incorrect `Authorization: Bearer ...` |
 | 404 on `/mcp` | wrong `-path` or extra trailing slash |
 | empty search results | wrong `entity_id`, extraction disabled, or facts are `superseded` / `deleted` |
+| `quota exceeded` | this process crossed `-quota` in the last minute |
+| tool missing from `tools/list` | `-scopes` did not include it |
 | high write latency | remote embedding/extraction provider; check logs and `memory_stats` |
 | database locked | use one process per SQLite file or switch to PostgreSQL |

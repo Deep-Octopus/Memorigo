@@ -9,11 +9,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +39,9 @@ func run() error {
 	entityID := flag.String("entity", env("MEMORI_ENTITY_ID", "mcp-user"), "default entity id when a tool call omits entity_id")
 	processID := flag.String("process", env("MEMORI_PROCESS_ID", "memorigo-mcp"), "process id recorded in provenance")
 	readOnly := flag.Bool("readonly", envBool("MEMORI_MCP_READONLY", false), "disable memory_remember and memory_forget")
+	scopesRaw := flag.String("scopes", env("MEMORI_MCP_SCOPES", ""), "comma-separated tool allow-list (empty allows every tool; aliases: read, write, all)")
+	quota := flag.Int("quota", envInt("MEMORI_MCP_QUOTA", 0), "max tool calls per minute in this process (0 is unlimited)")
+	auditPath := flag.String("audit", env("MEMORI_MCP_AUDIT_LOG", ""), "append a JSONL audit log; empty disables it")
 	httpMode := flag.Bool("http", envBool("MEMORI_MCP_HTTP", false), "serve stateless Streamable HTTP instead of stdio")
 	addr := flag.String("addr", env("MEMORI_MCP_ADDR", "127.0.0.1:8787"), "HTTP listen address")
 	token := flag.String("token", env("MEMORI_MCP_TOKEN", ""), "HTTP Bearer token (or MEMORI_MCP_TOKEN)")
@@ -54,6 +59,20 @@ func run() error {
 	if (*tlsCert == "") != (*tlsKey == "") {
 		return errors.New("-tls-cert and -tls-key must be provided together")
 	}
+	scopes, err := mcpserver.ParseScopes(*scopesRaw)
+	if err != nil {
+		return err
+	}
+	if *quota < 0 || *quota > mcpserver.MaxQuotaPerMinute {
+		return fmt.Errorf("quota must be between 0 and %d", mcpserver.MaxQuotaPerMinute)
+	}
+	audit, auditCloser, err := openAudit(*auditPath)
+	if err != nil {
+		return err
+	}
+	if auditCloser != nil {
+		defer auditCloser.Close()
+	}
 
 	db, err := openSQLite(*dbPath)
 	if err != nil {
@@ -68,15 +87,20 @@ func run() error {
 	}
 
 	server := mcpserver.New(m, mcpserver.Options{
-		EntityID:      *entityID,
-		ProcessID:     *processID,
-		ReadOnly:      *readOnly,
-		ServerVersion: version.Version,
+		EntityID:       *entityID,
+		ProcessID:      *processID,
+		ReadOnly:       *readOnly,
+		ServerVersion:  version.Version,
+		Scopes:         scopes,
+		QuotaPerMinute: *quota,
+		Audit:          audit,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	log.Printf("memorigo MCP governance readonly=%v scopes=%s quota=%d audit=%v",
+		*readOnly, scopeLabel(scopes), *quota, audit != nil)
 	if *httpMode {
 		return serveHTTP(ctx, server, httpConfig{
 			addr:           *addr,
@@ -88,8 +112,8 @@ func run() error {
 		})
 	}
 
-	log.Printf("memorigo MCP server ready transport=stdio db=%s entity=%s readonly=%v version=%s",
-		*dbPath, *entityID, *readOnly, version.Version)
+	log.Printf("memorigo MCP server ready transport=stdio db=%s entity=%s readonly=%v scopes=%s quota=%d audit=%v version=%s",
+		*dbPath, *entityID, *readOnly, scopeLabel(scopes), *quota, audit != nil, version.Version)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("mcp server: %w", err)
 	}
@@ -211,6 +235,24 @@ func openSQLite(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+func openAudit(path string) (io.Writer, io.Closer, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil, nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open audit log: %w", err)
+	}
+	return f, f, nil
+}
+
+func scopeLabel(scopes []string) string {
+	if len(scopes) == 0 {
+		return "all"
+	}
+	return strings.Join(scopes, ",")
+}
+
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -228,4 +270,16 @@ func envBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func envInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return -1
+	}
+	return n
 }

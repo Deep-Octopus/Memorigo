@@ -547,7 +547,7 @@ docs/         架构、MCP、评测、路线图
 - 嵌入模型/维度治理 + Reindex
 - Token 预算上下文 + 引用 + 原始证据 + 常驻画像三通道
 - 15 场景确定性评测 + CLI + CI
-- MCP stdio + Streamable HTTP + Bearer 鉴权
+- MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
@@ -556,7 +556,7 @@ docs/         架构、MCP、评测、路线图
 2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
 3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
 4. 多租户（org/app）+ RLS + 导出/删除合规
-5. MCP 配额与审计、评测三基线、薄框架适配
+5. 评测三基线、薄框架适配
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -568,7 +568,7 @@ docs/         架构、MCP、评测、路线图
 - 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
 - `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
 - 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**，也没有 LLM-judge 三基线。
-- MCP HTTP 使用 Bearer token，不含 OAuth、按工具授权或多租户 RLS；多租户请先做网络隔离与独立进程。
+- MCP HTTP 使用 Bearer token。工具授权是进程启动时的静态 allow-list，配额只计本进程，审计是本地 JSONL。没有 OAuth，也没有多租户 RLS。
 - MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
 - 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
 - 官方 MCP Go SDK 要求 **Go 1.25+**；纯 Go 构建仍为默认路径。
