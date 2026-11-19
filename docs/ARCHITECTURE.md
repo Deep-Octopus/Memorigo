@@ -77,6 +77,7 @@ flowchart TB
 | 注入 | `memori/memory_prompt.go` | 查询提取、`BuildContext`、模板渲染、消息插入 |
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |
 | 嵌入 | `embed/` | hash / OpenAI / 硅基流动 / Ollama、可选 HTTP rerank、LRU、HTTP 重试 |
+| HTTP API | `api/`、`cmd/memorigo-api` | Bearer JSON。`/healthz` 不鉴权。默认 `127.0.0.1:8788` |
 | 文本 | `textutil/` | 归一化、分词、CJK bigram、句子切分、token 估算 |
 | MCP | `mcpserver/` | 六个记忆工具、stdio 与 stateless Streamable HTTP 适配 |
 | 评测 | `eval/` | 确定性场景、报告、JSON 输出 |

@@ -498,6 +498,23 @@ n, _ := m.Reindex(ctx)    // 嵌入模型/维度变化后重建
 
 ---
 
+## JSON API
+
+`cmd/memorigo-api` 把同一套记忆暴露成 HTTP。除 `/healthz` 外都要 `Authorization: Bearer <token>`，除非显式 `-allow-anonymous`。
+
+```bash
+CGO_ENABLED=0 go build -o bin/memorigo-api ./cmd/memorigo-api
+./bin/memorigo-api -db memorigo.db -token "$MEMORI_API_TOKEN"
+curl -s -H "Authorization: Bearer $MEMORI_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"I like jazz records","entity_id":"alice"}' \
+  http://127.0.0.1:8788/v1/remember
+```
+
+写入接口：`/v1/remember`、`/v1/forget`、`/v1/restore`、`/v1/maintain`、`DELETE /v1/subject`。读取接口：`/v1/recall`、`/v1/context`、`/v1/facts`、`/v1/profile`、`/v1/stats`、`/v1/export`。`-readonly` 拒绝写入，但允许 `maintain` 的 `dry_run`。同一进程内的请求串行切换 `entity_id`。
+
+---
+
 ## 项目结构
 
 ```text
@@ -507,7 +524,8 @@ embed/        嵌入接口、hash/OpenAI/硅基流动/Ollama、可选 HTTP reran
 textutil/     归一化、分词（英文 + CJK bigram）、句子切分、token 估算
 mcpserver/    MCP 工具面 + stdio/HTTP 适配
 eval/         确定性评测场景、报告、JSON 输出
-cmd/          memorigo-eval、memorigo-mcp
+cmd/          memorigo-eval、memorigo-mcp、memorigo-api
+api/          JSON HTTP API（Bearer，/v1/recall 等）
 internal/     版本与构建元数据
 Dockerfile    多阶段 MCP 镜像（非 root + healthcheck）
 examples/     SQLite / PostgreSQL / MongoDB / OpenAI / SiliconFlow / Embedding
@@ -538,7 +556,7 @@ docs/         架构、MCP、评测、路线图
 2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
 3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
 4. 多租户（org/app）+ RLS + 导出/删除合规
-5. REST API、MCP 配额与审计、评测三基线
+5. MCP 配额与审计、评测三基线、薄框架适配
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

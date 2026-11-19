@@ -176,7 +176,7 @@ eval/
 6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
 7. **本地嵌入/重排**：✅ Ollama `POST /api/embed` 与可选 HTTP rerank（默认关闭）。没有 ONNX，也没有把模型打进二进制；Ollama 需要本机已经拉好模型。
 8. **隐私**：✅ `Export`（版本 1 JSON）与 `DeleteSubject` 硬删除。`MEMORI_PII_REDACT` 默认关闭，只遮邮箱、电话和通过 Luhn 的卡号。不是 crypto-shredding，也不是数据库 RLS。
-9. **REST 服务层**：MCP 已覆盖 Agent 客户端，通用 HTTP API 尚未提供。
+9. **REST**：✅ `cmd/memorigo-api` 提供 Bearer JSON API（召回、写入、上下文、画像、导出、维护、删除）。默认本机 `127.0.0.1:8788`。没有单独的 OpenAPI 文件。
 
 ---
 
