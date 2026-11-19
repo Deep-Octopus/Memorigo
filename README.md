@@ -269,7 +269,7 @@ pick = argmax(lambda * relevance - (1 - lambda) * max_similarity_to_selected)
 
 ### 时态事实
 
-每条事实可带 `slot` 与 `status`。互斥 slot（`profile.*`、`favorite.*`、`sentiment.*`、`health.allergy.*`）写入新值时，旧事实变为 `superseded`，不再参与召回，但保留审计记录。`Forget(id)` 执行软删除。自动抽取不会因为旧对话被重放而把 `superseded` / `deleted` 事实复活；只有显式 `Remember` / `memory_remember` 才会重新激活。
+每条事实可带 `slot` 与 `status`。互斥 slot（`profile.*`、`favorite.*`、`sentiment.*`、`health.allergy.*`）写入新值时，旧事实变为 `superseded`，不再参与召回，但保留审计记录。`Forget(id)` 执行软删除。`Maintain` 把长时间未被提及、且提及次数低于 `ProtectTimes` 的 active 事实标为 `expired`；`TTL <= 0` 时什么都不做。`Restore(id)` 只重新打开 `expired` 行，不会打开被覆盖或被 `Forget` 的行。自动抽取不会复活 `superseded` / `deleted` / `expired`；显式 `Remember` 同一内容会重新激活。
 
 ---
 
@@ -467,6 +467,9 @@ m.Close()                 // 不关闭用户传入的 db
 memori.NewWriter(m).Execute(ctx, memori.ConversationPayload{...})
 m.Remember("I prefer window seats")   // 同步；返回 fact id
 m.Forget(factID)
+report, _ := m.Maintain(memori.MaintainOptions{TTL: 90 * 24 * time.Hour, ProtectTimes: 2})
+_ = report
+m.Restore(factID) // 只重新打开 status=expired
 
 // 读取
 facts, _ := m.Recall("seat preference", 5)

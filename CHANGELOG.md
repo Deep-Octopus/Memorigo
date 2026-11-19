@@ -8,6 +8,7 @@ All notable changes to Memorigo are documented here. The format follows
 
 ### Added
 
+- **Reversible forgetting**: `Maintain` expires active facts that have not been seen within a caller-supplied TTL. Facts mentioned at least `ProtectTimes` times are kept. `DryRun` lists the same ids without writing. `Restore` reopens an expired fact. `Forget`, slot supersession, and a non-positive TTL are unchanged. Automatic extraction does not resurrect an expired fact; an explicit `Remember` of the same content does. There is no background summarizer.
 - **Temporal validity**: facts record `valid_from`, `valid_to`, `source_message_id`, `confidence` and `asserted_by`. Superseding or forgetting a fact closes its validity window instead of erasing provenance. Facts asserted by the assistant or by inference stay out of recall and the profile until `MEMORI_RECALL_INCLUDE_INFERRED=true`. `RememberWith` sets that provenance explicitly.
 - **Tenant scope**: `SetScope(org, app)` (or `MEMORI_ORG_ID` / `MEMORI_APP_ID`) isolates memory. The same entity id in two organizations cannot read each other's facts. Empty scope keeps the previous single-tenant key.
 - **Lexical candidate index**: facts store the same tokens the ranker uses. SQLite queries them with FTS5, PostgreSQL with a GIN `tsvector`, and MongoDB with a multikey token index. Recall unions those hits with the recent scan window, so an exact name or Chinese phrase is still found after it falls outside `MEMORI_RECALL_SCAN_LIMIT`. Dense search stays a bounded in-process scan; `modernc.org/sqlite` cannot load `vec0`.

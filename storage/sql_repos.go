@@ -351,17 +351,17 @@ ON CONFLICT(entity_id, uniq) DO UPDATE SET
  confidence = excluded.confidence,
  asserted_by = excluded.asserted_by,
  valid_from = CASE
-   WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND NOT %s
+   WHEN memori_entity_fact.status IN ('superseded', 'deleted', 'expired') AND NOT %s
    THEN excluded.valid_from
    ELSE COALESCE(memori_entity_fact.valid_from, excluded.valid_from)
  END,
  valid_to = CASE
-   WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND %s
+   WHEN memori_entity_fact.status IN ('superseded', 'deleted', 'expired') AND %s
    THEN memori_entity_fact.valid_to
    ELSE NULL
  END,
  status = CASE
-   WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND %s
+   WHEN memori_entity_fact.status IN ('superseded', 'deleted', 'expired') AND %s
    THEN memori_entity_fact.status
    ELSE 'active'
  END
@@ -395,7 +395,7 @@ func (r *sqlEntityFactRepo) Touch(ctx context.Context, factID int64) error {
 
 func (r *sqlEntityFactRepo) HasInactiveUniq(ctx context.Context, entityID int64, uniq string) (bool, error) {
 	query := fmt.Sprintf(
-		"SELECT 1 FROM memori_entity_fact WHERE entity_id = %s AND uniq = %s AND status IN ('superseded', 'deleted') LIMIT 1",
+		"SELECT 1 FROM memori_entity_fact WHERE entity_id = %s AND uniq = %s AND status IN ('superseded', 'deleted', 'expired') LIMIT 1",
 		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2),
 	)
 	var one int
@@ -643,6 +643,77 @@ func (r *sqlEntityFactRepo) Forget(ctx context.Context, entityID int64, factID i
 	now := time.Now()
 	_, err := r.q.ExecContext(ctx, query, now, now, entityID, factID)
 	return err
+}
+
+func (r *sqlEntityFactRepo) Expirable(ctx context.Context, entityID int64, cutoff time.Time, protectTimes int64) ([]int64, error) {
+	query := fmt.Sprintf(
+		`SELECT id FROM memori_entity_fact
+		 WHERE entity_id = %s AND status = 'active' AND date_last_time < %s`,
+		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2),
+	)
+	args := []any{entityID, cutoff}
+	if protectTimes > 0 {
+		query += " AND num_times < " + sqlPlaceholder(r.dialect, 3)
+		args = append(args, protectTimes)
+	}
+	query += " ORDER BY id"
+	rows, err := r.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r *sqlEntityFactRepo) Expire(ctx context.Context, entityID int64, factIDs []int64, at time.Time) error {
+	if len(factIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(factIDs))
+	args := make([]any, 0, len(factIDs)+3)
+	args = append(args, at, at, entityID)
+	for i, id := range factIDs {
+		placeholders[i] = sqlPlaceholder(r.dialect, i+4)
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(
+		`UPDATE memori_entity_fact
+		 SET status = 'expired', valid_to = COALESCE(valid_to, %s), date_updated = %s
+		 WHERE entity_id = %s AND status = 'active' AND id IN (%s)`,
+		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+		strings.Join(placeholders, ", "),
+	)
+	_, err := r.q.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (r *sqlEntityFactRepo) Restore(ctx context.Context, entityID int64, factID int64) error {
+	query := fmt.Sprintf(
+		`UPDATE memori_entity_fact
+		 SET status = 'active', valid_to = NULL, date_updated = %s
+		 WHERE entity_id = %s AND id = %s AND status = 'expired'`,
+		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+	)
+	res, err := r.q.ExecContext(ctx, query, time.Now(), entityID, factID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *sqlEntityFactRepo) Count(ctx context.Context, entityID int64) (int64, int64, error) {

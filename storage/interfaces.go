@@ -129,9 +129,9 @@ type EntityFactRepo interface {
 	Upsert(ctx context.Context, entityID int64, in FactInput) (int64, error)
 	// Touch bumps the frequency counter and last-seen timestamp.
 	Touch(ctx context.Context, factID int64) error
-	// HasInactiveUniq reports whether the entity already has a superseded or
-	// deleted fact with this content hash. Automatic extraction uses it to
-	// avoid resurrecting facts a user updated or explicitly forgot.
+	// HasInactiveUniq reports whether the entity already has a superseded,
+	// deleted, or expired fact with this content hash. Automatic extraction
+	// uses it to avoid resurrecting facts a user updated, forgot, or let expire.
 	HasInactiveUniq(ctx context.Context, entityID int64, uniq string) (bool, error)
 	// SupersedeSlot marks every other active fact in the same exclusive slot
 	// as superseded. Used for profile attributes such as name or home city.
@@ -151,4 +151,11 @@ type EntityFactRepo interface {
 	Count(ctx context.Context, entityID int64) (total int64, active int64, err error)
 	ListForReembed(ctx context.Context, entityID int64, model string, dim int, limit int) ([]FactForReembed, error)
 	UpdateEmbedding(ctx context.Context, factID int64, embedding []byte, model string, dim int) error
+	// Expirable lists active facts last seen before cutoff whose mention count
+	// is below protectTimes. protectTimes <= 0 protects nothing.
+	Expirable(ctx context.Context, entityID int64, cutoff time.Time, protectTimes int64) ([]int64, error)
+	// Expire marks the given active facts expired and closes valid_to.
+	Expire(ctx context.Context, entityID int64, factIDs []int64, at time.Time) error
+	// Restore reactivates an expired fact. Superseded and deleted facts stay closed.
+	Restore(ctx context.Context, entityID int64, factID int64) error
 }

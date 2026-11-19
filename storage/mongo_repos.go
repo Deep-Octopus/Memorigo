@@ -494,7 +494,7 @@ func (r *mongoEntityFactRepo) HasInactiveUniq(ctx context.Context, entityID int6
 	n, err := r.db.Collection("memori_entity_fact").CountDocuments(ctx, bson.M{
 		"entity_id": entityID,
 		"uniq":      uniq,
-		"status":    bson.M{"$in": []string{"superseded", "deleted"}},
+		"status":    bson.M{"$in": []string{"superseded", "deleted", "expired"}},
 	}, options.Count().SetLimit(1))
 	if err != nil {
 		return false, err
@@ -538,7 +538,7 @@ func mongoAssertedBy(v string) string {
 
 func mongoActiveFilter() bson.M {
 	// Missing status in legacy documents means active.
-	return bson.M{"status": bson.M{"$nin": []string{"superseded", "deleted"}}}
+	return bson.M{"status": bson.M{"$nin": []string{"superseded", "deleted", "expired"}}}
 }
 
 func (r *mongoEntityFactRepo) findFacts(ctx context.Context, filter bson.M, limit int, sort bson.D) ([]FactResult, error) {
@@ -660,6 +660,66 @@ func (r *mongoEntityFactRepo) Forget(ctx context.Context, entityID int64, factID
 		bson.M{"$set": bson.M{"status": "deleted", "valid_to": time.Now(), "date_updated": time.Now()}},
 	)
 	return err
+}
+
+func (r *mongoEntityFactRepo) Expirable(ctx context.Context, entityID int64, cutoff time.Time, protectTimes int64) ([]int64, error) {
+	ctx, cancel := mongoOpCtx(ctx)
+	defer cancel()
+	filter := bson.M{
+		"entity_id":      entityID,
+		"status":         "active",
+		"date_last_time": bson.M{"$lt": cutoff},
+	}
+	if protectTimes > 0 {
+		filter["num_times"] = bson.M{"$lt": protectTimes}
+	}
+	cur, err := r.db.Collection("memori_entity_fact").Find(ctx, filter, options.Find().SetProjection(bson.M{"id": 1}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	var ids []int64
+	for cur.Next(ctx) {
+		var doc struct {
+			ID int64 `bson:"id"`
+		}
+		if err := cur.Decode(&doc); err != nil {
+			return nil, err
+		}
+		ids = append(ids, doc.ID)
+	}
+	return ids, cur.Err()
+}
+
+func (r *mongoEntityFactRepo) Expire(ctx context.Context, entityID int64, factIDs []int64, at time.Time) error {
+	if len(factIDs) == 0 {
+		return nil
+	}
+	ctx, cancel := mongoOpCtx(ctx)
+	defer cancel()
+	_, err := r.db.Collection("memori_entity_fact").UpdateMany(ctx, bson.M{
+		"entity_id": entityID,
+		"status":    "active",
+		"id":        bson.M{"$in": factIDs},
+	}, bson.M{"$set": bson.M{"status": "expired", "valid_to": at, "date_updated": at}})
+	return err
+}
+
+func (r *mongoEntityFactRepo) Restore(ctx context.Context, entityID int64, factID int64) error {
+	ctx, cancel := mongoOpCtx(ctx)
+	defer cancel()
+	res, err := r.db.Collection("memori_entity_fact").UpdateOne(ctx, bson.M{
+		"entity_id": entityID,
+		"id":        factID,
+		"status":    "expired",
+	}, bson.M{"$set": bson.M{"status": "active", "valid_to": nil, "date_updated": time.Now()}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *mongoEntityFactRepo) Count(ctx context.Context, entityID int64) (int64, int64, error) {

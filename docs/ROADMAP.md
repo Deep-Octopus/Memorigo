@@ -173,7 +173,7 @@ eval/
 3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
 5. **MCP 生产治理**：HTTP 已有 Bearer 鉴权和 TLS 入口，但没有 OAuth、按工具授权、配额与审计日志。
-6. **巩固/遗忘 job**：只有手动 Forget，没有合并、衰减、TTL。
+6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
 7. **本地嵌入/重排**：默认 hash 只适合开发；生产需 Ollama/ONNX 或 API。
 8. **REST 服务层**：MCP 已覆盖 Agent 客户端，通用 HTTP API 尚未提供。
 
@@ -264,7 +264,7 @@ asserted_by       TEXT NOT NULL DEFAULT 'user'  -- user / assistant / inferred
 | P1-2 | **三通道上下文**：Profile + 事实 + 原始消息，MMR / 覆盖率 / 位置重排（✅ 基础版已交付） | 4 | 中 | memory tax 可量化；证据覆盖率提升 |
 | P1-3 | **MCP server**（✅ stdio + HTTP + Bearer 已交付） | 4 | 中 | Claude Code / Cursor 可读写；工具有集成测试 |
 | P1-4 | **框架适配**：Eino / Genkit 薄适配 | 3 | 低 | 示例可运行；不绑定框架抽象 |
-| P1-5 | **巩固/遗忘 job** | 3 | 中 | 记忆条数下降而 accuracy 不降；可回滚 |
+| P1-5 | **巩固/遗忘**（✅ `Maintain`/`Restore`：TTL + 提及次数保护，可 dry-run、可恢复；无 LLM 摘要、无自动调度） | 3 | 中 | 过期事实离开召回，`Restore` 后回来；高频事实保留 |
 | P1-6 | **本地嵌入 / reranker** | 3 | 低到中 | 无 API key 可运行；模型版本锁定 |
 | P1-7 | **隐私与合规**：PII 脱敏、导出、crypto-shredding | 4 | 中 | 删除可证明；导出格式稳定 |
 
