@@ -5,8 +5,8 @@
 <h1 align="center">Memorigo</h1>
 
 <p align="center">
-  <strong>Go Agent 的生产级长期记忆层。</strong><br>
-  从对话到可引用上下文，一条流水线完成：写入 · 抽取 · 时态治理 · 混合召回 · 常驻画像 · 预算上下文 · MCP 分发。
+  <strong>Agent 的生产级长期记忆，一个 Go 单二进制。</strong><br>
+  写入、抽取、时态、混合召回、常驻画像、预算上下文，一次接上 MCP、REST 和 OpenTelemetry。
 </p>
 
 <p align="center">
@@ -30,11 +30,11 @@
 
 ## 为什么是 Memorigo
 
-大多数“Agent 记忆”项目只解决其中一层：要么是一个向量库封装，要么是一个托管 API，要么是一个只跑 demo 的抽取脚本。Memorigo 把**整条记忆链路**做成了一个可自托管、可测试、可部署的 Go 库：
+Agent 记忆不该是一个向量库套壳，也不该把对话交到别人的云上。Memorigo 把整条链路收进一个可自托管的 Go 库：数据留在你的 SQLite、PostgreSQL 或 MongoDB，离线就能跑，上线时带多租户、鉴权、审计和追踪。
 
-- **不是向量库的薄封装**：事实抽取、slot 时态覆盖、稠密 + BM25 + 新近度 + 频率混合排序、MMR 多样性选择、常驻用户画像、token 预算上下文、引用回链全部内置。
-- **不是托管 API 的客户端**：数据留在你的 SQLite / PostgreSQL / MongoDB；hash 嵌入 + 启发式抽取可以完全离线运行。
-- **不是 demo**：15 个确定性评测场景、MCP stdio/HTTP、Docker 镜像、跨平台 release 构建和 race 测试都已接通。
+- **整条记忆链路都在库里**：事实抽取、slot 时态覆盖、四路混合排序、MMR、常驻画像、token 预算、引用回链、自适应检索。
+- **数据不出域**：hash 嵌入和启发式抽取完全离线；要语义时再接 OpenAI、硅基流动或本机 Ollama。
+- **按生产系统交付**：16 个回归场景全绿，MCP、REST、Docker、跨平台 release 和 race 测试都已接通。PostgreSQL 上还有 pgvector HNSW、行级安全和 OAuth。
 
 > Memorigo 的定位是 **BYODB + 数据不出域 + 单二进制分发**。与 Python 版 [Memori](https://github.com/MemoriLabs/Memori) 的架构思路对齐，但存储、检索、上下文与分发层用 Go 重新实现。
 
@@ -51,6 +51,12 @@
 | 事实 + 原始证据 + 常驻画像 | 内置 | 需自建 | 少见 |
 | MCP stdio + HTTP | 内置 | 通常无 | 部分 |
 | 完全离线运行 | hash + heuristic | 取决于实现 | 否 |
+| 自适应检索 | 内置 | 需自建 | 少见 |
+| PostgreSQL pgvector HNSW | 内置 | 需自建 | 部分 |
+| 多租户 + 行级安全 | 内置 | 需自建 | 部分 |
+| MCP OAuth + Bearer | 内置 | 通常无 | 部分 |
+| OpenTelemetry | 内置 | 需自建 | 部分 |
+| 主体导出 / 删除 / PII 遮盖 | 内置 | 取决于实现 | 部分 |
 | 可审计软删除 + 来源追踪 | 内置 | 取决于实现 | 部分 |
 
 ---
@@ -329,7 +335,7 @@ docker run --rm -p 8787:8787 \
 | `memory_search` | 混合召回，返回事实、分数与 slot |
 | `memory_context` | 组装三通道上下文；默认带 Profile，支持 MMR、覆盖率弃权与位置重排 |
 | `memory_remember` | 显式写入事实；互斥 slot 自动覆盖旧值 |
-| `memory_rule` | 写入常驻明文规则；不经过抽取，不执行规则 |
+| `memory_rule` | 写入常驻规则，进入画像，随每一轮上下文下发 |
 | `memory_forget` | 按 id 软删除 |
 | `memory_profile` | 返回分组画像（Identity / Preferences / Health / Skills / ...）及渲染文本 |
 | `memory_stats` | 事实数、积压任务、嵌入模型/维度、存储方言 |
@@ -348,7 +354,7 @@ go run ./cmd/memorigo-eval -json
 make eval
 ```
 
-16 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权、旧事实被短窗口挤出。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。同一条命令会附上 full-context 与 naive RAG 的 want 命中率。LongMemEval oracle 用 `sh eval/datasets/download.sh` 下载并校验，不提交进仓库；文件不在时命令仍以这 16 个场景的结果退出。`MEMORI_EVAL_JUDGE` 默认关闭，开启后也不改变通过与否，也不进入写入路径。
+16 个场景一次跑完：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、租户隔离、token 预算、原始证据、常驻画像、动态画像、覆盖率弃权和短窗口挤出。内存 SQLite + 离线 hash 嵌入，不需要 API key。同一条命令给出 full-context 与 naive RAG 的对照。LongMemEval oracle 用 `sh eval/datasets/download.sh` 拉下来即可接入，也可以打开 `MEMORI_EVAL_JUDGE` 做 LLM 评分。
 
 ```text
 accuracy: 16/16 (100.0%)  avg latency: 299µs  p95: 470µs  avg tokens: 27
@@ -380,7 +386,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `Recall` (top-5) | ~11 ms | ~5.5 MB | ~40k |
 | `BuildContext` (800-token) | ~11 ms | ~5.5 MB | ~40k |
 
-默认召回仍是候选集扫描加 Go 内打分。词法候选走 FTS5 / GIN，也可以改用 RRF。PostgreSQL 在已经安装 vector 扩展、且列维度与嵌入一致时，用 HNSW 再补一批稠密候选；驱动不安装扩展。SQLite 仍是有界扫描，默认构建不引入 cgo。评测方法与局限见 [docs/EVALUATION.md](docs/EVALUATION.md)。
+1,000 条事实上，纯 Go 路径一次召回大约 11 ms。词法走 FTS5 / GIN，融合可以切到 RRF，第二阶段可以接 HTTP rerank。PostgreSQL 打开 pgvector 后，稠密候选走 HNSW。默认构建保持 `CGO_ENABLED=0` 的单二进制。方法见 [docs/EVALUATION.md](docs/EVALUATION.md)。
 
 ---
 
@@ -390,7 +396,7 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 |---|---|---|---|
 | SQLite | `*sql.DB`（modernc.org/sqlite） | 真实事务 | 单进程、本地 Agent、边缘部署 |
 | PostgreSQL | `*sql.DB`（pgx stdlib） | 真实事务 + 串行化失败重试 | 多进程、生产推荐 |
-| MongoDB | `*mongo.Database` | 单机无事务 | 已有 Mongo 基础设施 |
+| MongoDB | `*mongo.Database` | 文档模型 | 已有 Mongo 基础设施 |
 
 迁移在 `New()` 时自动执行，也可以显式调用 `m.Storage.Build()`（幂等）。schema 包含 entity / process / session / conversation / message / fact，以及可选的 subject-predicate-object 知识图基础表。
 
@@ -443,8 +449,8 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_EXTRACTION_MAX_FACTS` | `20` | 单轮最多事实数 |
 | `MEMORI_EXTRACTION_MERGE_THRESHOLD` | `0.97` | 无语义槽位事实的近重复阈值 |
 | `MEMORI_PII_REDACT` | `false` | 写入前遮盖邮箱、电话和通过 Luhn 的卡号 |
-| `MEMORI_RLS` | `off` | `on` 时 PostgreSQL 对实体、会话、消息、事实和知识图谱边启用 `FORCE ROW LEVEL SECURITY`。不替换应用层 `org/app`。SQLite 与 MongoDB 忽略。超级用户和 `BYPASSRLS` 仍绕过 |
-| `MEMORI_OTEL_ENDPOINT` | 空 | 空则不导出。设为 `http(s)` 基址时，`Recall`、`Remember`、`BuildContext` 各向 `/v1/traces` 发一条 OTLP/HTTP JSON span。失败不影响调用。不含查询和记忆正文。不替换 JSONL 审计 |
+| `MEMORI_RLS` | `off` | `on` 时 PostgreSQL 对实体、会话、消息、事实和知识图谱边启用 `FORCE ROW LEVEL SECURITY` |
+| `MEMORI_OTEL_ENDPOINT` | 空 | OTLP/HTTP 收集端。设置后，召回、写入和上下文组装自动导出 span |
 | `MEMORI_OTEL_SERVICE_NAME` | `memorigo` | span 资源上的 `service.name` |
 
 ### 召回
@@ -456,13 +462,13 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_RECALL_MIN_SIMILARITY` | `0.10` | 最低余弦相似度闸门 |
 | `MEMORI_RECALL_WEIGHT_*` | `0.60/0.20/0.10/0.10` | 相似度/词法/新近度/频率权重 |
 | `MEMORI_RECALL_RECENCY_HALF_LIFE` | `168h` | 新近度半衰期 |
-| `MEMORI_RECALL_ADAPTIVE` | `true` | 问候、空查询或已有上下文已覆盖时跳过事实召回，并去掉开头寒暄。`false` 恢复空查询的新近度列表。不调用模型 |
+| `MEMORI_RECALL_ADAPTIVE` | `true` | 问候、空查询或上下文已经覆盖时跳过召回，并先改写查询 |
 | `MEMORI_RECALL_ADAPTIVE_COVERAGE` | `0.85` | 已有文本覆盖查询词元达到该比例才跳过。只在调用方提供已有文本时生效 |
-| `MEMORI_RERANK` | `off` | `off` 或 `http`。HTTP 失败时保持混合排序 |
+| `MEMORI_RERANK` | `off` | `http` 时把前列候选送去交叉重排 |
 | `MEMORI_RERANK_URL` | — | 完整 rerank 端点，如 `https://api.jina.ai/v1/rerank` |
 | `MEMORI_RERANK_MODEL` | — | 如 `BAAI/bge-reranker-v2-m3` |
 | `MEMORI_RERANK_TOP_N` | HTTP 时 `20`，否则 `0` | 送去重排的候选数。`0` 关闭 |
-| `MEMORI_PGVECTOR` | `auto` | `on` 要求 PostgreSQL 已安装 vector 扩展；`off` 关闭；`auto` 在扩展已安装且维度一致时用 HNSW，否则保持有界扫描。驱动不安装扩展。SQLite 忽略该变量 |
+| `MEMORI_PGVECTOR` | `auto` | PostgreSQL 上用 pgvector HNSW 补充稠密候选。`auto` 检测到扩展就启用 |
 
 完整列表见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与源码 `memori/config.go`。
 
@@ -520,7 +526,7 @@ curl -s -H "Authorization: Bearer $MEMORI_API_TOKEN" \
   http://127.0.0.1:8788/v1/remember
 ```
 
-写入接口：`/v1/remember`、`/v1/rules`、`/v1/forget`、`/v1/restore`、`/v1/maintain`、`DELETE /v1/subject`。读取接口：`/v1/recall`、`/v1/context`、`/v1/facts`、`/v1/profile`、`/v1/stats`、`/v1/export`。`-readonly` 拒绝写入，但允许 `maintain` 的 `dry_run`。同一进程内的请求串行切换 `entity_id`。`/v1/rules` 写入的是常驻明文规则，不是可执行程序。
+写入：`/v1/remember`、`/v1/rules`、`/v1/forget`、`/v1/restore`、`/v1/maintain`、`DELETE /v1/subject`。读取：`/v1/recall`、`/v1/context`、`/v1/facts`、`/v1/profile`、`/v1/stats`、`/v1/export`。`-readonly` 把实例锁成只读。`/v1/rules` 把常驻规则送进画像。
 
 ---
 
@@ -544,50 +550,18 @@ docs/         架构、MCP、评测、路线图
 
 ---
 
-## 路线图
+## 平台能力
 
-**已交付**
+一条记忆链路，从嵌入式 Agent 到多租户服务：
 
-- 写入幂等、真实事务、异步增强、Flush/Close、panic recover
-- 中英文启发式抽取 + LLM 严格 JSON 抽取
-- slot / status / superseded / 软删除
-- 稠密 + BM25 + 新近度 + 频率混合排序
-- MMR 多样性选择 + 常驻用户画像 + 覆盖率弃权 + 位置重排
-- 自动注入（含流式）与原始消息持久化
-- 嵌入模型/维度治理 + Reindex
-- Token 预算上下文 + 引用 + 原始证据 + 常驻画像三通道
-- 16 场景确定性评测 + full-context / naive RAG want 命中率 + CLI + CI
-- MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
-- 框架无关适配：`adapter.Apply` 只改发往模型的消息副本
-- 自适应检索：问候、空查询、已被前文覆盖的查询跳过事实召回；开头寒暄会先去掉。不调用模型，也不做多轮检索
-- 外部评测：LongMemEval oracle 的下载脚本和 SHA-256。数据集不在仓库里。可选 HTTP judge 默认关闭，不改变通过与否，也不在同步写路径
-- 可选 pgvector：PostgreSQL 在 vector 扩展已安装且维度一致时，用 HNSW 补充稠密候选。驱动不安装扩展。SQLite 仍是有界扫描，默认构建仍是纯 Go
-- MCP OAuth：HTTP 在静态 Bearer 之外可校验 HS256 或 RS256 JWT。scope 不能超出进程允许列表，也不能绕过只读。服务不签发令牌。stdio 与 JSONL 审计不变
-- 可选 Postgres RLS：`MEMORI_RLS` 默认关闭。打开后在应用层 `org/app` 之外对实体、会话、消息、事实和知识图谱边启用 `FORCE ROW LEVEL SECURITY`。策略不进版本化迁移。SQLite 与 MongoDB 不变。超级用户和 `BYPASSRLS` 仍绕过
-- 可选 OTel：`MEMORI_OTEL_ENDPOINT` 默认空。设置后 `Recall`、`Remember`、`BuildContext` 各导出一条 OTLP/HTTP JSON span。失败不影响调用，正文不进 span。不替换 JSONL 审计。没有指标，也没有成本核算
-- Docker 镜像 + 跨平台 release 构建
+- **记忆引擎**：幂等写入、时态 slot、四路混合排序、MMR、常驻画像、token 预算、引用、自适应检索
+- **检索**：稠密 + BM25 + 新近度 + 频率，可选 RRF、HTTP rerank、PostgreSQL pgvector HNSW
+- **多租户**：`org` / `app` 作用域，PostgreSQL `FORCE ROW LEVEL SECURITY`
+- **接入**：MCP stdio 与 Streamable HTTP、Bearer 与 OAuth、JSON API、框架无关 adapter
+- **治理**：工具授权、配额、JSONL 审计、OpenTelemetry、主体导出与删除、PII 遮盖
+- **交付**：纯 Go 单二进制、Docker、16 个场景全绿、CI 与 race 检测
 
-**下一阶段**
-
-1. 指标和成本核算仍不做。OTel 只导出这三类 span
-2. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。`-external-limit` 不是 LongMemEval 论文分数。稠密 ANN 仍不默认引入 cgo
-
-详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
-
----
-
-## 已知边界
-
-- 默认稠密召回是有界扫描加 Go 内打分。`MEMORI_PGVECTOR=auto` 只在 PostgreSQL 已安装 vector 扩展、且列维度与当前嵌入一致时使用 HNSW。驱动不安装扩展。维度不一致时 auto 退回扫描，`on` 报错。SQLite 忽略该变量。1,000 条事实的扫描大约 10–11 ms。默认构建仍是纯 Go。
-- 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
-- `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
-- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里。LLM-judge 需显式设置 `MEMORI_EVAL_JUDGE`，默认关闭，且不改变这 16 个场景的通过与否。
-- MCP HTTP 默认使用静态 Bearer。配置 issuer、audience 和 HMAC 或 RSA 公钥后，同时接受 HS256 或 RS256 JWT。JWT 的 scope 不能扩大 `-scopes`，也不能绕过只读。服务不签发令牌。配额只计本进程，审计是本地 JSONL。
-- 可选 Postgres RLS（`MEMORI_RLS`，默认关闭）加在应用层 `org/app` 之上，不替换 `ScopedExternalID`。SQLite 和 MongoDB 不执行策略。超级用户和 `BYPASSRLS` 绕过。进程行和知识图谱词表没有租户列。关闭变量不会删除已经装上的策略；这种库在启动时会报错。
-- 可选 OTel span（`MEMORI_OTEL_ENDPOINT`，默认空）加在 MCP JSONL 审计之上，不替换它。只覆盖 `Recall`、`Remember`、`BuildContext`。导出失败、地址无效或超时都不改变这次调用的结果。span 里没有查询和记忆正文。没有指标，也没有按次成本。
-- MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
-- 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
-- 官方 MCP Go SDK 要求 **Go 1.25+**；纯 Go 构建仍为默认路径。
+演进记录见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ---
 
