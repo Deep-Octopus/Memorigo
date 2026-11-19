@@ -58,6 +58,7 @@ func Apply(ctx context.Context, m *memori.Memori, messages []memori.ChatMessage,
 		FactLimit:      opts.FactLimit,
 		IncludeRaw:     opts.IncludeRaw,
 		IncludeProfile: true,
+		Existing:       memori.ExistingTurns(messages),
 	})
 	if err != nil {
 		return Result{}, err

@@ -62,6 +62,10 @@ type ContextOptions struct {
 	// MinCoverage optionally marks the package insufficient when the selected
 	// evidence covers less than this fraction of query tokens.
 	MinCoverage float64
+	// Existing is text the caller already holds, such as earlier chat turns.
+	// Adaptive retrieval can skip fact recall when this text already covers
+	// the query. It is not used as a search query.
+	Existing string
 }
 
 // ContextCitation points at the source of an assembled memory item.
@@ -102,6 +106,12 @@ type ContextPackage struct {
 	Coverage             float64           `json:"coverage,omitempty"`
 	TopScore             float64           `json:"top_score,omitempty"`
 	InsufficientEvidence bool              `json:"insufficient_evidence,omitempty"`
+	// RecallQuery is set when adaptive retrieval searched a rewritten query.
+	RecallQuery string `json:"recall_query,omitempty"`
+	// RecallSkipped is true when fact recall did not run. The profile is unchanged.
+	RecallSkipped bool `json:"recall_skipped,omitempty"`
+	// RecallSkipReason is "empty", "greeting", or "sufficient".
+	RecallSkipReason string `json:"recall_skip_reason,omitempty"`
 }
 
 // BuildContext recalls facts and, optionally, raw conversation evidence, then
@@ -184,17 +194,31 @@ func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOpt
 		}
 	}
 
+	decision := DecideRecall(query, opts.Existing, snap.Recall.Adaptive, snap.Recall.AdaptiveCoverage)
+	pkg.RecallSkipped = decision.Skip
+	pkg.RecallSkipReason = decision.Reason
+	recallQuery := query
+	if snap.Recall.Adaptive {
+		recallQuery = decision.Query
+		if recallQuery != query {
+			pkg.RecallQuery = recallQuery
+		}
+	}
+
 	// Recall a wider pool than we will use so diversity selection has room.
-	factCandidates := factLimit * 4
-	if factCandidates < factLimit {
-		factCandidates = factLimit
-	}
-	if factCandidates > maxContextCandidates {
-		factCandidates = maxContextCandidates
-	}
-	ranked, err := m.recallRankedForEntity(ctx, repos, entityID, query, factCandidates, snap)
-	if err != nil {
-		return pkg, err
+	var ranked []rankedFact
+	if !decision.Skip {
+		factCandidates := factLimit * 4
+		if factCandidates < factLimit {
+			factCandidates = factLimit
+		}
+		if factCandidates > maxContextCandidates {
+			factCandidates = maxContextCandidates
+		}
+		ranked, err = m.recallRankedForEntity(ctx, repos, entityID, recallQuery, factCandidates, snap, opts.Existing)
+		if err != nil {
+			return pkg, err
+		}
 	}
 	lambda := opts.MMRLambda
 	if opts.DisableDiversity {
@@ -207,7 +231,7 @@ func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOpt
 	facts = dedupeFactsAgainstProfile(facts, pkg.Profile)
 
 	var messages []ContextMessage
-	if opts.IncludeRaw {
+	if opts.IncludeRaw && !decision.Skip {
 		rawLimit := opts.RawLimit
 		if rawLimit <= 0 {
 			rawLimit = defaultRawLimit
@@ -227,17 +251,17 @@ func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOpt
 		if messageCandidates > maxContextCandidates {
 			messageCandidates = maxContextCandidates
 		}
-		messages = rankContextMessages(query, stored, messageCandidates)
+		messages = rankContextMessages(recallQuery, stored, messageCandidates)
 		messages = dedupeMessagesAgainstFacts(messages, facts)
 		if len(messages) > rawLimit {
 			messages = messages[:rawLimit]
 		}
 	}
 
-	coverage := contextCoverage(query, facts, messages, pkg.Profile)
+	coverage := contextCoverage(recallQuery, facts, messages, pkg.Profile)
 	pkg.Coverage = coverage
 	pkg.TopScore = topFactScore(facts)
-	pkg.InsufficientEvidence = contextInsufficient(query, facts, messages, pkg.Profile, coverage, opts.MinCoverage)
+	pkg.InsufficientEvidence = contextInsufficient(recallQuery, facts, messages, pkg.Profile, coverage, opts.MinCoverage)
 
 	text, usedFacts, usedMessages, citations, truncated := packContext(budget, pkg.ProfileText, facts, messages, packOptions{
 		rawShare:    opts.RawBudgetShare,

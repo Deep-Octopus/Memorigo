@@ -453,6 +453,8 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_RECALL_MIN_SIMILARITY` | `0.10` | 最低余弦相似度闸门 |
 | `MEMORI_RECALL_WEIGHT_*` | `0.60/0.20/0.10/0.10` | 相似度/词法/新近度/频率权重 |
 | `MEMORI_RECALL_RECENCY_HALF_LIFE` | `168h` | 新近度半衰期 |
+| `MEMORI_RECALL_ADAPTIVE` | `true` | 问候、空查询或已有上下文已覆盖时跳过事实召回，并去掉开头寒暄。`false` 恢复空查询的新近度列表。不调用模型 |
+| `MEMORI_RECALL_ADAPTIVE_COVERAGE` | `0.85` | 已有文本覆盖查询词元达到该比例才跳过。只在调用方提供已有文本时生效 |
 | `MEMORI_RERANK` | `off` | `off` 或 `http`。HTTP 失败时保持混合排序 |
 | `MEMORI_RERANK_URL` | — | 完整 rerank 端点，如 `https://api.jina.ai/v1/rerank` |
 | `MEMORI_RERANK_MODEL` | — | 如 `BAAI/bge-reranker-v2-m3` |
@@ -553,13 +555,14 @@ docs/         架构、MCP、评测、路线图
 - 16 场景确定性评测 + full-context / naive RAG want 命中率 + CLI + CI
 - MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
 - 框架无关适配：`adapter.Apply` 只改发往模型的消息副本
+- 自适应检索：问候、空查询、已被前文覆盖的查询跳过事实召回；开头寒暄会先去掉。不调用模型，也不做多轮检索
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
 1. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
-2. 数据库 RLS、OAuth、OTel。稠密 ANN 仍不默认引入 cgo
-3. 自适应检索、图扩展和多模态仍不做。程序性规则只保存明文，不执行。
+2. 数据库 RLS、OAuth、OTel。PostgreSQL 上的 pgvector 仅在扩展存在时才考虑。稠密 ANN 仍不默认引入 cgo
+3. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

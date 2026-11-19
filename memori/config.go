@@ -52,6 +52,14 @@ type RecallConfig struct {
 	// RerankTopN is how many already-ranked facts are sent to an optional
 	// reranker. Zero disables the pass even when a reranker is installed.
 	RerankTopN int
+	// Adaptive skips recall for an empty query, a greeting, or a query whose
+	// tokens are already covered by caller-supplied context. It also strips a
+	// leading greeting before search. There is no model call. Default is on.
+	// Set false to keep an empty query as a recency listing.
+	Adaptive bool
+	// AdaptiveCoverage is the fraction of query tokens that must already appear
+	// in existing context before recall is skipped. Values outside (0, 1] use 0.85.
+	AdaptiveCoverage float64
 }
 
 // RerankConfig selects an optional HTTP reranker. Provider "off" (the default)
@@ -175,6 +183,8 @@ func newConfig() *Config {
 			RRFK:             envInt("MEMORI_RECALL_RRF_K", 60),
 			IncludeInferred:  envBool("MEMORI_RECALL_INCLUDE_INFERRED", false),
 			RerankTopN:       rerankTopN(),
+			Adaptive:         envBool("MEMORI_RECALL_ADAPTIVE", true),
+			AdaptiveCoverage: normalizeAdaptiveCoverage(envFloat("MEMORI_RECALL_ADAPTIVE_COVERAGE", defaultAdaptiveCoverage)),
 		},
 		Rerank: RerankConfig{
 			Provider: normalizeRerankProvider(envString("MEMORI_RERANK", "off")),

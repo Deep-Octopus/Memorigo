@@ -347,16 +347,21 @@ func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]r
 	if err != nil {
 		return nil, err
 	}
-	return m.recallRankedForEntity(ctx, repos, entityID, query, limit, snap)
+	return m.recallRankedForEntity(ctx, repos, entityID, query, limit, snap, "")
 }
 
-func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos, entityID int64, query string, limit int, snap configSnapshot) ([]rankedFact, error) {
+func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos, entityID int64, query string, limit int, snap configSnapshot, existing string) ([]rankedFact, error) {
 	if limit <= 0 {
 		limit = snap.RecallLimit
 	}
 	if limit <= 0 {
 		limit = 5
 	}
+	decision := DecideRecall(query, existing, snap.Recall.Adaptive, snap.Recall.AdaptiveCoverage)
+	if decision.Skip {
+		return nil, nil
+	}
+	query = decision.Query
 	var queryEmbedding []float32
 	if strings.TrimSpace(query) != "" {
 		var embedErr error

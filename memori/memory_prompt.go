@@ -115,6 +115,7 @@ func (m *Memori) prepareMessages(ctx context.Context, messages []ChatMessage) []
 		ProfileBudget:         snap.Profile.Budget,
 		ProfileLimit:          snap.Profile.Limit,
 		IncludeDynamicProfile: snap.Profile.IncludeDynamic,
+		Existing:              ExistingTurns(messages),
 	})
 	if err != nil {
 		m.logger.Warn("auto memory injection skipped: recall failed", "error", err)

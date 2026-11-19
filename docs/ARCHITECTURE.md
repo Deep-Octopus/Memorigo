@@ -297,7 +297,8 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - 若查询有词元：要求 `lexRaw > 0 || sim >= MinSimilarity`，否则丢弃。
 - `score < MinScore` 丢弃。
 - 排序：score 降序 → 新近度 → 频率 → ID。
-- 空查询：按新近度/频率返回，适合“最近记住了什么”。
+- 空查询：自适应检索开启时（默认）不扫描候选，直接返回空。`MEMORI_RECALL_ADAPTIVE=false` 时仍按新近度/频率返回，适合“最近记住了什么”。`rankFacts` 对空查询的排序没有改。
+- 自适应检索：本地规则，不调用模型。仅由问候组成的查询跳过事实召回。开头的 hi / hello / hey / thanks / 你好 / 您好 / 谢谢等会先去掉，再把剩余部分交给混合检索和可选 rerank。`history` 不会被当成 `hi`。调用方通过 `ContextOptions.Existing`（自动注入和 `adapter.Apply` 使用更早的 user/assistant 轮次）提供已有文本；查询词元覆盖率达到 `MEMORI_RECALL_ADAPTIVE_COVERAGE`（默认 0.85）才跳过。没有已有文本时不会因为“可能已经知道”而跳过。跳过时不嵌入、不扫词法索引、不取原始消息；常驻画像照常组装。不做第二轮检索。
 - 可选 rerank：`MEMORI_RERANK=http` 时，对已经通过闸门的前 `MEMORI_RERANK_TOP_N` 条（HTTP 模式默认 20）再请求一次兼容 Jina/Cohere 的 `/rerank`。失败或返回长度不对时保持原顺序。开启后 `Fact.Score` 变成 `(0, 1]` 的名次分，相似度与词法分仍保留。默认关闭。
 
 ### 7.4 注入
