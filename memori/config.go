@@ -46,6 +46,9 @@ type RecallConfig struct {
 	Fusion string
 	// RRFK is the reciprocal-rank constant. Zero uses the usual value of 60.
 	RRFK int
+	// IncludeInferred recalls facts asserted by the assistant or by inference.
+	// User-asserted facts are always eligible. Default is false.
+	IncludeInferred bool
 }
 
 // ProfileConfig controls the always-on profile injected independently of the
@@ -75,6 +78,8 @@ type Config struct {
 
 	EntityID    string
 	ProcessID   string
+	OrgID       string
+	AppID       string
 	SessionID   uuid.UUID
 	RecallLimit int
 
@@ -98,6 +103,8 @@ type Config struct {
 type configSnapshot struct {
 	EntityID      string
 	ProcessID     string
+	OrgID         string
+	AppID         string
 	SessionID     uuid.UUID
 	RecallLimit   int
 	AutoInject    bool
@@ -113,6 +120,8 @@ type configSnapshot struct {
 
 func newConfig() *Config {
 	c := &Config{
+		OrgID:         envString("MEMORI_ORG_ID", ""),
+		AppID:         envString("MEMORI_APP_ID", ""),
 		SessionID:     uuid.New(),
 		RecallLimit:   envInt("MEMORI_RECALL_LIMIT", 5),
 		AutoInject:    envBool("MEMORI_AUTO_INJECT", true),
@@ -149,6 +158,7 @@ func newConfig() *Config {
 			RecencyHalfLife:  envDuration("MEMORI_RECALL_RECENCY_HALF_LIFE", 7*24*time.Hour),
 			Fusion:           normalizeFusion(envString("MEMORI_RECALL_FUSION", "weighted")),
 			RRFK:             envInt("MEMORI_RECALL_RRF_K", 60),
+			IncludeInferred:  envBool("MEMORI_RECALL_INCLUDE_INFERRED", false),
 		},
 		Profile: ProfileConfig{
 			Budget:         envInt("MEMORI_PROFILE_BUDGET", 200),
@@ -165,6 +175,8 @@ func (c *Config) snapshot() configSnapshot {
 	return configSnapshot{
 		EntityID:      c.EntityID,
 		ProcessID:     c.ProcessID,
+		OrgID:         c.OrgID,
+		AppID:         c.AppID,
 		SessionID:     c.SessionID,
 		RecallLimit:   c.RecallLimit,
 		AutoInject:    c.AutoInject,

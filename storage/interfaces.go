@@ -71,6 +71,9 @@ type MessageRepo interface {
 	// RecentForEntity returns recent messages across every conversation owned by
 	// the entity. It powers the raw-evidence channel of context assembly.
 	RecentForEntity(ctx context.Context, entityID int64, limit int) ([]StoredMessage, error)
+	// LatestUserMessageID returns the newest user message in a conversation.
+	// The boolean is false when the conversation has no user message.
+	LatestUserMessageID(ctx context.Context, conversationID int64) (int64, bool, error)
 }
 
 // FactInput is a candidate long-term memory fact.
@@ -82,6 +85,11 @@ type FactInput struct {
 	EmbeddingModel       string
 	EmbeddingDim         int
 	SourceConversationID *int64
+	SourceMessageID      *int64
+	// Confidence is in (0, 1]. Zero stores the default of 1.
+	Confidence float64
+	// AssertedBy is user, assistant, or inferred. Empty stores user.
+	AssertedBy string
 	// PreserveInactive keeps an existing superseded/deleted row inactive.
 	// Automatic extraction sets it so a multi-process race cannot resurrect a
 	// fact the user forgot; explicit Remember leaves it false.
@@ -101,6 +109,11 @@ type FactResult struct {
 	EmbeddingDim         int
 	EmbeddingModel       string
 	SourceConversationID *int64
+	ValidFrom            time.Time
+	ValidTo              *time.Time
+	SourceMessageID      *int64
+	Confidence           float64
+	AssertedBy           string
 }
 
 // FactForReembed is a lightweight row used by the re-embedding maintenance

@@ -341,6 +341,11 @@ func factsFromRanked(ranked []rankedFact) []Fact {
 			NumTimes:       r.fact.NumTimes,
 			DateLastTime:   r.fact.DateLastTime,
 			ConversationID: r.fact.SourceConversationID,
+			ValidFrom:      r.fact.ValidFrom,
+			ValidTo:        r.fact.ValidTo,
+			MessageID:      r.fact.SourceMessageID,
+			Confidence:     r.fact.Confidence,
+			AssertedBy:     r.fact.AssertedBy,
 		})
 	}
 	return out

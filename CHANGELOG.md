@@ -8,6 +8,8 @@ All notable changes to Memorigo are documented here. The format follows
 
 ### Added
 
+- **Temporal validity**: facts record `valid_from`, `valid_to`, `source_message_id`, `confidence` and `asserted_by`. Superseding or forgetting a fact closes its validity window instead of erasing provenance. Facts asserted by the assistant or by inference stay out of recall and the profile until `MEMORI_RECALL_INCLUDE_INFERRED=true`. `RememberWith` sets that provenance explicitly.
+- **Tenant scope**: `SetScope(org, app)` (or `MEMORI_ORG_ID` / `MEMORI_APP_ID`) isolates memory. The same entity id in two organizations cannot read each other's facts. Empty scope keeps the previous single-tenant key.
 - **Lexical candidate index**: facts store the same tokens the ranker uses. SQLite queries them with FTS5, PostgreSQL with a GIN `tsvector`, and MongoDB with a multikey token index. Recall unions those hits with the recent scan window, so an exact name or Chinese phrase is still found after it falls outside `MEMORI_RECALL_SCAN_LIMIT`. Dense search stays a bounded in-process scan; `modernc.org/sqlite` cannot load `vec0`.
 - **Reciprocal rank fusion** (`MEMORI_RECALL_FUSION=rrf`): an optional alternative to linear hybrid weights. A fact that is best on one signal (typically an exact name or identifier) is no longer buried by a mediocre dense score. `MEMORI_RECALL_FUSION=weighted` restores the previous ranking. Scores stay in `[0, 1]`, so `MinScore` means the same thing in both modes.
 - **Always-on profile** (`Memori.Profile`): a small, query-independent

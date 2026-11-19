@@ -166,4 +166,17 @@ var postgresMigrations = map[int][]string{
 		`CREATE INDEX IF NOT EXISTS idx_memori_entity_fact_search
 			ON memori_entity_fact USING GIN (to_tsvector('simple', search_text))`,
 	},
+	4: {
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS valid_from TIMESTAMP DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS valid_to TIMESTAMP DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS source_message_id BIGINT DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN IF NOT EXISTS asserted_by VARCHAR(32) NOT NULL DEFAULT 'user'`,
+	},
+	5: {
+		`ALTER TABLE memori_entity ADD COLUMN IF NOT EXISTS org_id VARCHAR(100) NOT NULL DEFAULT ''`,
+		`ALTER TABLE memori_entity ADD COLUMN IF NOT EXISTS app_id VARCHAR(100) NOT NULL DEFAULT ''`,
+		`ALTER TABLE memori_entity ALTER COLUMN external_id TYPE VARCHAR(400)`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_scope ON memori_entity (org_id, app_id)`,
+	},
 }

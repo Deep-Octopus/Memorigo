@@ -16,9 +16,11 @@ import (
 // CandidateFact is a fact produced by an extractor before embedding and
 // reconciliation.
 type CandidateFact struct {
-	Content   string
-	Slot      string
-	Exclusive bool
+	Content    string
+	Slot       string
+	Exclusive  bool
+	AssertedBy string
+	Confidence float64
 }
 
 // ExtractionInput is the conversation slice considered for fact extraction.

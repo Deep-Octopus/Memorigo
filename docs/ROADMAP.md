@@ -170,8 +170,8 @@ eval/
 
 1. **外部评测与三基线**：当前只有确定性回归，尚未接 LoCoMo / LongMemEval，也没有 full-context / naive-RAG / LLM-judge 对比。
 2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。稠密检索仍是有界扫描；pgvector HNSW 仍未接（`modernc` 不能加载 `vec0`，默认构建保持纯 Go）。
-3. **时态 v3**：缺 `valid_from/valid_to`、`source_message_id`、置信度与信任分级（上下文覆盖率弃权已交付）。
-4. **多租户**：只有 `entity_id`，没有 org/app/agent 作用域与 RLS。
+3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
+4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
 5. **MCP 生产治理**：HTTP 已有 Bearer 鉴权和 TLS 入口，但没有 OAuth、按工具授权、配额与审计日志。
 6. **巩固/遗忘 job**：只有手动 Forget，没有合并、衰减、TTL。
 7. **本地嵌入/重排**：默认 hash 只适合开发；生产需 Ollama/ONNX 或 API。
@@ -190,8 +190,8 @@ eval/
 | P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付） | 5 | 中 | 一条命令产出 accuracy/latency/token/$ 报告；配置哈希可复现 |
 | P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引；稠密仍是有界扫描，pgvector 未接） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
 | P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付，`MEMORI_RECALL_FUSION=rrf`，默认可回滚到加权融合；rerank 仍未做） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
-| P0-4 | **时态 v3：valid_from/valid_to + source_message_id** | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
-| P0-5 | **多租户最小闭环** | 5 | 中 | `org_id/app_id` 进入 schema；跨租户泄漏测试为 0 |
+| P0-4 | **时态 v3：valid_from/valid_to + source_message_id**（✅ 已交付） | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
+| P0-5 | **多租户最小闭环**（✅ 应用层 org/app 隔离已交付；数据库 RLS 未做） | 5 | 中 | `org_id/app_id` 进入 schema；跨租户泄漏测试为 0 |
 
 #### P0-2 设计草案
 

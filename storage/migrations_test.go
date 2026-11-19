@@ -42,13 +42,14 @@ func TestSQLMigrationUpgradesVersion1(t *testing.T) {
 	if err := db.QueryRow("SELECT num FROM memori_schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Fatalf("schema version = %d, want 3", version)
+	if version != 5 {
+		t.Fatalf("schema version = %d, want 5", version)
 	}
 
 	columns := sqliteColumns(t, db, "memori_entity_fact")
 	for _, want := range []string{
 		"slot", "status", "embedding_model", "embedding_dim", "source_conversation_id", "search_text",
+		"valid_from", "valid_to", "source_message_id", "confidence", "asserted_by",
 	} {
 		if _, ok := columns[want]; !ok {
 			t.Errorf("missing column %q after migration", want)

@@ -146,7 +146,7 @@ func (m *Memori) BuildContext(ctx context.Context, query string, opts ContextOpt
 		return pkg, nil
 	}
 
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
 		return pkg, nil
 	}

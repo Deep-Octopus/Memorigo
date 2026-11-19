@@ -273,6 +273,15 @@ func (m *AugmentationManager) storeFacts(ctx context.Context, entityID int64, so
 		}
 	}
 
+	var sourceMessageID *int64
+	if sourceConversationID != nil {
+		if id, ok, msgErr := repos.Message().LatestUserMessageID(ctx, *sourceConversationID); msgErr != nil {
+			return nil, msgErr
+		} else if ok {
+			sourceMessageID = &id
+		}
+	}
+
 	factRepo := repos.EntityFact()
 	ids := make([]int64, 0, len(clean))
 	for i, c := range clean {
@@ -323,6 +332,9 @@ func (m *AugmentationManager) storeFacts(ctx context.Context, entityID int64, so
 			EmbeddingModel:       tag,
 			EmbeddingDim:         len(vec),
 			SourceConversationID: sourceConversationID,
+			SourceMessageID:      sourceMessageID,
+			Confidence:           c.Confidence,
+			AssertedBy:           c.AssertedBy,
 			PreserveInactive:     !reactivate,
 		})
 		if err != nil {

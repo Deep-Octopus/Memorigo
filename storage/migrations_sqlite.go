@@ -189,4 +189,21 @@ var sqliteMigrations = map[int][]string{
 		END`,
 		`INSERT INTO memori_fact_fts(memori_fact_fts) VALUES('rebuild')`,
 	},
+	4: {
+		// Temporal validity. valid_to is NULL while the fact is current.
+		// source_message_id points at the user message that produced it.
+		// asserted_by distinguishes a user statement from model inference.
+		`ALTER TABLE memori_entity_fact ADD COLUMN valid_from TEXT DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN valid_to TEXT DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN source_message_id INTEGER DEFAULT NULL`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`,
+		`ALTER TABLE memori_entity_fact ADD COLUMN asserted_by TEXT NOT NULL DEFAULT 'user'`,
+	},
+	5: {
+		// Tenant columns. Isolation itself is the scoped external_id, so two
+		// orgs can use the same user id. The columns make that scope queryable.
+		`ALTER TABLE memori_entity ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE memori_entity ADD COLUMN app_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_memori_entity_scope ON memori_entity (org_id, app_id)`,
+	},
 }

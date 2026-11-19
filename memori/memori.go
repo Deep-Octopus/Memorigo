@@ -191,6 +191,21 @@ func (m *Memori) Attribution(entityID, processID string) *Memori {
 	return m
 }
 
+// SetScope binds later reads and writes to an organization and application.
+// Empty values mean a single-tenant installation. IDs are limited to 100
+// characters. Facts stored under one scope are invisible to another, even
+// when the entity id is the same.
+func (m *Memori) SetScope(orgID, appID string) error {
+	if utf8.RuneCountInString(orgID) > 100 || utf8.RuneCountInString(appID) > 100 {
+		return errors.New("memori: org_id and app_id cannot be longer than 100 characters")
+	}
+	m.Config.mu.Lock()
+	m.Config.OrgID = orgID
+	m.Config.AppID = appID
+	m.Config.mu.Unlock()
+	return nil
+}
+
 // TryAttribution is the error-returning variant of Attribution.
 func (m *Memori) TryAttribution(entityID, processID string) error {
 	if utf8.RuneCountInString(entityID) > 100 {
@@ -308,7 +323,7 @@ func (m *Memori) recallRanked(ctx context.Context, query string, limit int) ([]r
 		limit = 5
 	}
 
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
 	}
@@ -353,12 +368,29 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 			candidates = mergeFactResults(candidates, lexical)
 		}
 	}
+	candidates = visibleFacts(candidates, snap.Recall.IncludeInferred)
 
 	ranked := rankFacts(query, queryEmbedding, candidates, snap.Recall, time.Now())
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
 	return ranked, nil
+}
+
+// visibleFacts hides assistant and inferred facts unless the caller opts in.
+// Legacy rows with an empty asserter count as user statements.
+func visibleFacts(facts []storage.FactResult, includeInferred bool) []storage.FactResult {
+	if includeInferred || len(facts) == 0 {
+		return facts
+	}
+	out := make([]storage.FactResult, 0, len(facts))
+	for _, fact := range facts {
+		switch fact.AssertedBy {
+		case "", "user":
+			out = append(out, fact)
+		}
+	}
+	return out
 }
 
 // mergeFactResults appends lexical hits that were not already in the recency
@@ -409,10 +441,24 @@ func (m *Memori) ContextText(ctx context.Context, query string, limit int) (stri
 	return mc.Text, nil
 }
 
+// RememberOptions controls provenance for an explicit fact.
+type RememberOptions struct {
+	// AssertedBy is "user" (default), "assistant", or "inferred".
+	// Non-user facts stay out of recall until IncludeInferred is set.
+	AssertedBy string
+	// Confidence is in (0, 1]. Zero stores 1.
+	Confidence float64
+}
+
 // Remember stores an explicit long-term fact synchronously. It applies the
 // same slot reconciliation as automatic extraction, so remembering a new home
 // city supersedes the old one.
 func (m *Memori) Remember(content string) (int64, error) {
+	return m.RememberWith(content, RememberOptions{})
+}
+
+// RememberWith is Remember with explicit provenance.
+func (m *Memori) RememberWith(content string, opts RememberOptions) (int64, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return 0, ErrEmptyContent
@@ -435,7 +481,7 @@ func (m *Memori) Remember(content string) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
 	defer cancel()
 
-	entityID, err := m.ids.entity(ctx, repos, snap.EntityID)
+	entityID, err := m.ids.entity(ctx, repos, entityKey(snap))
 	if err != nil {
 		return 0, err
 	}
@@ -443,6 +489,14 @@ func (m *Memori) Remember(content string) (int64, error) {
 	candidates := extractCandidatesFromText(content)
 	if len(candidates) == 0 {
 		candidates = []CandidateFact{{Content: content}}
+	}
+	for i := range candidates {
+		if opts.AssertedBy != "" {
+			candidates[i].AssertedBy = opts.AssertedBy
+		}
+		if opts.Confidence > 0 {
+			candidates[i].Confidence = opts.Confidence
+		}
 	}
 	ids, err := m.Augmentation.storeFacts(ctx, entityID, nil, candidates, true)
 	if err != nil {
@@ -469,7 +523,7 @@ func (m *Memori) Forget(factID int64) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
 	defer cancel()
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if err != nil {
 		return err
 	}
@@ -493,7 +547,7 @@ func (m *Memori) Facts(limit int) ([]Fact, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), snap.OpTimeout)
 	defer cancel()
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, nil
 	}
@@ -520,8 +574,9 @@ func (m *Memori) Facts(limit int) ([]Fact, error) {
 
 // Stats reports memory counts and component metadata.
 func (m *Memori) Stats(ctx context.Context) (Stats, error) {
+	snap := m.Config.snapshot()
 	stats := Stats{
-		EntityID:          m.Config.snapshot().EntityID,
+		EntityID:          snap.EntityID,
 		EmbeddingProvider: m.Embedder.Provider(),
 		EmbeddingModel:    m.Embedder.Model(),
 		EmbeddingDim:      m.Embedder.Dimension(),
@@ -535,7 +590,7 @@ func (m *Memori) Stats(ctx context.Context) (Stats, error) {
 	if stats.EntityID == "" {
 		return stats, nil
 	}
-	entityID, err := repos.Entity().GetByExternalID(ctx, stats.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
 		return stats, nil
 	}
@@ -562,7 +617,7 @@ func (m *Memori) Reindex(ctx context.Context) (int, error) {
 	if snap.EntityID == "" {
 		return 0, ErrNoAttribution
 	}
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if err != nil {
 		return 0, err
 	}

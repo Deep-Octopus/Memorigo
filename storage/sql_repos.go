@@ -55,11 +55,13 @@ func (r *sqlEntityRepo) Create(ctx context.Context, externalID string) (int64, e
 	}
 
 	query := fmt.Sprintf(
-		"INSERT INTO memori_entity (uuid, external_id, date_created) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING id",
+		"INSERT INTO memori_entity (uuid, external_id, org_id, app_id, date_created) VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING id",
 		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+		sqlPlaceholder(r.dialect, 4), sqlPlaceholder(r.dialect, 5),
 	)
+	org, app, _ := ScopeParts(externalID)
 	var id int64
-	err := r.q.QueryRowContext(ctx, query, uuid.New().String(), externalID, time.Now()).Scan(&id)
+	err := r.q.QueryRowContext(ctx, query, uuid.New().String(), externalID, org, app, time.Now()).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Another writer created it first. ON CONFLICT keeps a PostgreSQL
 		// transaction usable; a caught unique violation would abort it.
@@ -297,6 +299,24 @@ func scanStoredMessages(rows *sql.Rows, capacity int) ([]StoredMessage, error) {
 	return out, nil
 }
 
+func (r *sqlMessageRepo) LatestUserMessageID(ctx context.Context, conversationID int64) (int64, bool, error) {
+	query := fmt.Sprintf(
+		`SELECT id FROM memori_conversation_message
+		 WHERE conversation_id = %s AND role = 'user'
+		 ORDER BY id DESC LIMIT 1`,
+		sqlPlaceholder(r.dialect, 1),
+	)
+	var id int64
+	err := r.q.QueryRowContext(ctx, query, conversationID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 func reverseMessages(msgs []StoredMessage) {
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
@@ -313,8 +333,9 @@ func (r *sqlEntityFactRepo) Upsert(ctx context.Context, entityID int64, in FactI
 	query := fmt.Sprintf(`
 INSERT INTO memori_entity_fact
  (uuid, entity_id, content, content_embedding, num_times, date_last_time,
-  uniq, slot, embedding_model, embedding_dim, source_conversation_id, status, date_created, search_text)
-VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
+  uniq, slot, embedding_model, embedding_dim, source_conversation_id, status, date_created, search_text,
+  valid_from, source_message_id, confidence, asserted_by)
+VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s)
 ON CONFLICT(entity_id, uniq) DO UPDATE SET
  content = excluded.content,
  content_embedding = excluded.content_embedding,
@@ -325,22 +346,39 @@ ON CONFLICT(entity_id, uniq) DO UPDATE SET
  embedding_model = excluded.embedding_model,
  embedding_dim = excluded.embedding_dim,
  source_conversation_id = COALESCE(excluded.source_conversation_id, memori_entity_fact.source_conversation_id),
+ source_message_id = COALESCE(excluded.source_message_id, memori_entity_fact.source_message_id),
  search_text = excluded.search_text,
+ confidence = excluded.confidence,
+ asserted_by = excluded.asserted_by,
+ valid_from = CASE
+   WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND NOT %s
+   THEN excluded.valid_from
+   ELSE COALESCE(memori_entity_fact.valid_from, excluded.valid_from)
+ END,
+ valid_to = CASE
+   WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND %s
+   THEN memori_entity_fact.valid_to
+   ELSE NULL
+ END,
  status = CASE
    WHEN memori_entity_fact.status IN ('superseded', 'deleted') AND %s
    THEN memori_entity_fact.status
    ELSE 'active'
  END
 RETURNING id`,
-		ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10), ph(11), ph(12), ph(13),
+		ph(1), ph(2), ph(3), ph(4), ph(5), ph(6), ph(7), ph(8), ph(9), ph(10),
+		ph(11), ph(12), ph(13), ph(14), ph(15), ph(16), ph(17), ph(18), ph(19),
 	)
 
 	var id int64
 	now := time.Now()
+	assertedBy, confidence := normalizeAssertion(in.AssertedBy, in.Confidence)
 	err := r.q.QueryRowContext(ctx, query,
 		uuid.New().String(), entityID, in.Content, in.Embedding,
 		now, in.Uniq, in.Slot, in.EmbeddingModel, in.EmbeddingDim,
-		nullableInt64(in.SourceConversationID), now, storedSearchText(in.Content), in.PreserveInactive,
+		nullableInt64(in.SourceConversationID), now, storedSearchText(in.Content),
+		now, nullableInt64(in.SourceMessageID), confidence, assertedBy,
+		in.PreserveInactive, in.PreserveInactive, in.PreserveInactive,
 	).Scan(&id)
 	return id, err
 }
@@ -377,12 +415,13 @@ func (r *sqlEntityFactRepo) SupersedeSlot(ctx context.Context, entityID int64, s
 	}
 	query := fmt.Sprintf(
 		`UPDATE memori_entity_fact
-		 SET status = 'superseded', date_updated = %s
+		 SET status = 'superseded', valid_to = %s, date_updated = %s
 		 WHERE entity_id = %s AND slot = %s AND id <> %s AND status = 'active'`,
 		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2),
-		sqlPlaceholder(r.dialect, 3), sqlPlaceholder(r.dialect, 4),
+		sqlPlaceholder(r.dialect, 3), sqlPlaceholder(r.dialect, 4), sqlPlaceholder(r.dialect, 5),
 	)
-	_, err := r.q.ExecContext(ctx, query, time.Now(), entityID, slot, exceptID)
+	now := time.Now()
+	_, err := r.q.ExecContext(ctx, query, now, now, entityID, slot, exceptID)
 	return err
 }
 
@@ -392,22 +431,43 @@ func (r *sqlEntityFactRepo) scanFacts(rows *sql.Rows) ([]FactResult, error) {
 	for rows.Next() {
 		var f FactResult
 		var embedding []byte
-		var dateLast any
-		var sourceConv sql.NullInt64
+		var dateLast, validFrom, validTo any
+		var sourceConv, sourceMsg sql.NullInt64
+		var confidence sql.NullFloat64
+		var assertedBy sql.NullString
 
 		if err := rows.Scan(
 			&f.ID, &f.Content, &embedding, &f.NumTimes, &dateLast,
 			&f.Slot, &f.EmbeddingDim, &f.EmbeddingModel, &sourceConv,
+			&validFrom, &validTo, &sourceMsg, &confidence, &assertedBy,
 		); err != nil {
 			return nil, err
 		}
 		if t, ok := decodeAnyTime(dateLast); ok {
 			f.DateLastTime = t
 		}
+		if t, ok := decodeAnyTime(validFrom); ok {
+			f.ValidFrom = t
+		}
+		if t, ok := decodeAnyTime(validTo); ok {
+			f.ValidTo = &t
+		}
 		f.Embedding = DecodeEmbedding(embedding)
 		if sourceConv.Valid {
 			id := sourceConv.Int64
 			f.SourceConversationID = &id
+		}
+		if sourceMsg.Valid {
+			id := sourceMsg.Int64
+			f.SourceMessageID = &id
+		}
+		f.Confidence = 1
+		if confidence.Valid && confidence.Float64 > 0 {
+			f.Confidence = confidence.Float64
+		}
+		f.AssertedBy = "user"
+		if assertedBy.Valid && assertedBy.String != "" {
+			f.AssertedBy = assertedBy.String
 		}
 		out = append(out, f)
 	}
@@ -422,9 +482,7 @@ func (r *sqlEntityFactRepo) Candidates(ctx context.Context, entityID int64, scan
 		scanLimit = 2000
 	}
 	query := fmt.Sprintf(`
-SELECT id, content, content_embedding, num_times, date_last_time,
-       COALESCE(slot, ''), COALESCE(embedding_dim, 0), COALESCE(embedding_model, ''),
-       source_conversation_id
+SELECT `+factColumns("")+`
 FROM memori_entity_fact
 WHERE entity_id = %s AND status = 'active'
 ORDER BY date_last_time DESC, id DESC
@@ -451,9 +509,7 @@ func (r *sqlEntityFactRepo) SearchLexical(ctx context.Context, entityID int64, q
 			return nil, nil
 		}
 		stmt := fmt.Sprintf(`
-SELECT id, content, content_embedding, num_times, date_last_time,
-       COALESCE(slot, ''), COALESCE(embedding_dim, 0), COALESCE(embedding_model, ''),
-       source_conversation_id
+SELECT `+factColumns("")+`
 FROM memori_entity_fact
 WHERE entity_id = %s AND status = 'active'
   AND to_tsvector('simple', search_text) @@ to_tsquery('simple', %s)
@@ -475,9 +531,7 @@ LIMIT %s`,
 			return nil, nil
 		}
 		stmt := fmt.Sprintf(`
-SELECT f.id, f.content, f.content_embedding, f.num_times, f.date_last_time,
-       COALESCE(f.slot, ''), COALESCE(f.embedding_dim, 0), COALESCE(f.embedding_model, ''),
-       f.source_conversation_id
+SELECT `+factColumns("f")+`
 FROM memori_fact_fts
 JOIN memori_entity_fact f ON f.id = memori_fact_fts.rowid
 WHERE memori_fact_fts MATCH %s AND f.entity_id = %s AND f.status = 'active'
@@ -491,6 +545,38 @@ LIMIT %s`,
 		}
 		return r.scanFacts(rows)
 	}
+}
+
+func factColumns(prefix string) string {
+	col := func(name string) string {
+		if prefix == "" {
+			return name
+		}
+		return prefix + "." + name
+	}
+	return fmt.Sprintf(`%s, %s, %s, %s, %s,
+       COALESCE(%s, ''), COALESCE(%s, 0), COALESCE(%s, ''),
+       %s, %s, %s, %s,
+       COALESCE(%s, 1), COALESCE(%s, 'user')`,
+		col("id"), col("content"), col("content_embedding"), col("num_times"), col("date_last_time"),
+		col("slot"), col("embedding_dim"), col("embedding_model"),
+		col("source_conversation_id"), col("valid_from"), col("valid_to"), col("source_message_id"),
+		col("confidence"), col("asserted_by"))
+}
+
+func normalizeAssertion(assertedBy string, confidence float64) (string, float64) {
+	switch strings.ToLower(strings.TrimSpace(assertedBy)) {
+	case "assistant":
+		assertedBy = "assistant"
+	case "inferred":
+		assertedBy = "inferred"
+	default:
+		assertedBy = "user"
+	}
+	if confidence <= 0 || confidence > 1 {
+		confidence = 1
+	}
+	return assertedBy, confidence
 }
 
 func storedSearchText(content string) string {
@@ -536,9 +622,7 @@ func (r *sqlEntityFactRepo) List(ctx context.Context, entityID int64, limit int)
 		limit = 100
 	}
 	query := fmt.Sprintf(`
-SELECT id, content, content_embedding, num_times, date_last_time,
-       COALESCE(slot, ''), COALESCE(embedding_dim, 0), COALESCE(embedding_model, ''),
-       source_conversation_id
+SELECT `+factColumns("")+`
 FROM memori_entity_fact
 WHERE entity_id = %s AND status = 'active'
 ORDER BY date_last_time DESC, num_times DESC, id DESC
@@ -553,10 +637,11 @@ LIMIT %s`, sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2))
 
 func (r *sqlEntityFactRepo) Forget(ctx context.Context, entityID int64, factID int64) error {
 	query := fmt.Sprintf(
-		"UPDATE memori_entity_fact SET status = 'deleted', date_updated = %s WHERE entity_id = %s AND id = %s",
-		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3),
+		"UPDATE memori_entity_fact SET status = 'deleted', valid_to = COALESCE(valid_to, %s), date_updated = %s WHERE entity_id = %s AND id = %s",
+		sqlPlaceholder(r.dialect, 1), sqlPlaceholder(r.dialect, 2), sqlPlaceholder(r.dialect, 3), sqlPlaceholder(r.dialect, 4),
 	)
-	_, err := r.q.ExecContext(ctx, query, time.Now(), entityID, factID)
+	now := time.Now()
+	_, err := r.q.ExecContext(ctx, query, now, now, entityID, factID)
 	return err
 }
 

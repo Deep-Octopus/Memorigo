@@ -101,7 +101,7 @@ func (w *Writer) Execute(ctx context.Context, payload ConversationPayload) error
 	if wrote && conversationID > 0 && snap.EntityID != "" {
 		w.m.Augmentation.Enqueue(AugmentationInput{
 			ConversationID: conversationID,
-			EntityID:       snap.EntityID,
+			EntityID:       entityKey(snap),
 			ProcessID:      snap.ProcessID,
 			Messages:       freshMessages,
 			Response:       payload.Response,
@@ -117,7 +117,7 @@ func (w *Writer) executeTransaction(ctx context.Context, repos storage.Repos, pa
 		// ids created here become visible to other goroutines before commit
 		// and would survive a rollback. The repository Create methods are
 		// get-or-create, so the extra round-trip is bounded.
-		id, err := repos.Entity().Create(ctx, snap.EntityID)
+		id, err := repos.Entity().Create(ctx, entityKey(snap))
 		if err != nil {
 			return 0, nil, false, err
 		}

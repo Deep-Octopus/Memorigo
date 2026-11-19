@@ -45,10 +45,13 @@ func (r *mongoEntityRepo) Create(ctx context.Context, externalID string) (int64,
 	if err != nil {
 		return 0, err
 	}
+	org, app, _ := ScopeParts(externalID)
 	doc := bson.M{
 		"id":           seq,
 		"uuid":         uuid.New().String(),
 		"external_id":  externalID,
+		"org_id":       org,
+		"app_id":       app,
 		"date_created": time.Now(),
 	}
 	_, err = r.db.Collection("memori_entity").InsertOne(ctx, doc)
@@ -293,6 +296,27 @@ func (r *mongoMessageRepo) Recent(ctx context.Context, conversationID int64, lim
 	return decodeMongoMessages(ctx, cur, limit)
 }
 
+func (r *mongoMessageRepo) LatestUserMessageID(ctx context.Context, conversationID int64) (int64, bool, error) {
+	ctx, cancel := mongoOpCtx(ctx)
+	defer cancel()
+
+	var doc struct {
+		ID int64 `bson:"id"`
+	}
+	err := r.db.Collection("memori_conversation_message").FindOne(
+		ctx,
+		bson.M{"conversation_id": conversationID, "role": "user"},
+		options.FindOne().SetSort(bson.D{{Key: "id", Value: -1}}),
+	).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return doc.ID, true, nil
+}
+
 func (r *mongoMessageRepo) RecentForEntity(ctx context.Context, entityID int64, limit int) ([]StoredMessage, error) {
 	if limit <= 0 {
 		limit = 200
@@ -383,6 +407,7 @@ func (r *mongoEntityFactRepo) Upsert(ctx context.Context, entityID int64, in Fac
 	defer cancel()
 
 	now := time.Now()
+	assertedBy, confidence := normalizeAssertion(in.AssertedBy, in.Confidence)
 	set := bson.M{
 		"content":           in.Content,
 		"content_embedding": in.Embedding,
@@ -392,12 +417,18 @@ func (r *mongoEntityFactRepo) Upsert(ctx context.Context, entityID int64, in Fac
 		"embedding_model":   in.EmbeddingModel,
 		"embedding_dim":     in.EmbeddingDim,
 		"search_tokens":     textutil.SearchTokens(in.Content),
+		"confidence":        confidence,
+		"asserted_by":       assertedBy,
 	}
 	if !in.PreserveInactive {
 		set["status"] = "active"
+		set["valid_to"] = nil
 	}
 	if in.SourceConversationID != nil {
 		set["source_conversation_id"] = *in.SourceConversationID
+	}
+	if in.SourceMessageID != nil {
+		set["source_message_id"] = *in.SourceMessageID
 	}
 
 	filter := bson.M{"entity_id": entityID, "uniq": in.Uniq}
@@ -413,6 +444,7 @@ func (r *mongoEntityFactRepo) Upsert(ctx context.Context, entityID int64, in Fac
 			"id":           seq,
 			"uuid":         uuid.New().String(),
 			"date_created": now,
+			"valid_from":   now,
 		}
 		if in.PreserveInactive {
 			// Do not overwrite an existing superseded/deleted status; a new
@@ -485,9 +517,23 @@ func (r *mongoEntityFactRepo) SupersedeSlot(ctx context.Context, entityID int64,
 			"status":    bson.M{"$nin": []string{"superseded", "deleted"}},
 			"id":        bson.M{"$ne": exceptID},
 		},
-		bson.M{"$set": bson.M{"status": "superseded", "date_updated": time.Now()}},
+		bson.M{"$set": bson.M{"status": "superseded", "valid_to": time.Now(), "date_updated": time.Now()}},
 	)
 	return err
+}
+
+func mongoConfidence(v float64) float64 {
+	if v <= 0 {
+		return 1
+	}
+	return v
+}
+
+func mongoAssertedBy(v string) string {
+	if v == "" {
+		return "user"
+	}
+	return v
 }
 
 func mongoActiveFilter() bson.M {
@@ -511,15 +557,20 @@ func (r *mongoEntityFactRepo) findFacts(ctx context.Context, filter bson.M, limi
 	out := make([]FactResult, 0, 64)
 	for cur.Next(ctx) {
 		var doc struct {
-			ID                   int64     `bson:"id"`
-			Content              string    `bson:"content"`
-			Embedding            []byte    `bson:"content_embedding"`
-			Slot                 string    `bson:"slot"`
-			NumTimes             int64     `bson:"num_times"`
-			DateLastTime         time.Time `bson:"date_last_time"`
-			EmbeddingModel       string    `bson:"embedding_model"`
-			EmbeddingDim         int       `bson:"embedding_dim"`
-			SourceConversationID *int64    `bson:"source_conversation_id"`
+			ID                   int64      `bson:"id"`
+			Content              string     `bson:"content"`
+			Embedding            []byte     `bson:"content_embedding"`
+			Slot                 string     `bson:"slot"`
+			NumTimes             int64      `bson:"num_times"`
+			DateLastTime         time.Time  `bson:"date_last_time"`
+			EmbeddingModel       string     `bson:"embedding_model"`
+			EmbeddingDim         int        `bson:"embedding_dim"`
+			SourceConversationID *int64     `bson:"source_conversation_id"`
+			ValidFrom            time.Time  `bson:"valid_from"`
+			ValidTo              *time.Time `bson:"valid_to"`
+			SourceMessageID      *int64     `bson:"source_message_id"`
+			Confidence           float64    `bson:"confidence"`
+			AssertedBy           string     `bson:"asserted_by"`
 		}
 		if err := cur.Decode(&doc); err != nil {
 			return nil, err
@@ -534,6 +585,11 @@ func (r *mongoEntityFactRepo) findFacts(ctx context.Context, filter bson.M, limi
 			EmbeddingModel:       doc.EmbeddingModel,
 			EmbeddingDim:         doc.EmbeddingDim,
 			SourceConversationID: doc.SourceConversationID,
+			ValidFrom:            doc.ValidFrom,
+			ValidTo:              doc.ValidTo,
+			SourceMessageID:      doc.SourceMessageID,
+			Confidence:           mongoConfidence(doc.Confidence),
+			AssertedBy:           mongoAssertedBy(doc.AssertedBy),
 		})
 	}
 	if err := cur.Err(); err != nil {
@@ -601,7 +657,7 @@ func (r *mongoEntityFactRepo) Forget(ctx context.Context, entityID int64, factID
 	_, err := r.db.Collection("memori_entity_fact").UpdateOne(
 		ctx,
 		bson.M{"id": factID, "entity_id": entityID},
-		bson.M{"$set": bson.M{"status": "deleted", "date_updated": time.Now()}},
+		bson.M{"$set": bson.M{"status": "deleted", "valid_to": time.Now(), "date_updated": time.Now()}},
 	)
 	return err
 }

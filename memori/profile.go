@@ -79,7 +79,7 @@ func (m *Memori) Profile(ctx context.Context, opts ProfileOptions) (Profile, err
 	if snap.EntityID == "" {
 		return p, ErrNoAttribution
 	}
-	entityID, err := repos.Entity().GetByExternalID(ctx, snap.EntityID)
+	entityID, err := repos.Entity().GetByExternalID(ctx, entityKey(snap))
 	if errors.Is(err, storage.ErrNotFound) {
 		return p, nil
 	}
@@ -120,6 +120,7 @@ func (m *Memori) profileForEntity(ctx context.Context, repos storage.Repos, enti
 	if err != nil {
 		return p, err
 	}
+	rows = visibleFacts(rows, snap.Recall.IncludeInferred)
 	if len(rows) == 0 {
 		return p, nil
 	}
