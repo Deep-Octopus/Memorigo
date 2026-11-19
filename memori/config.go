@@ -12,7 +12,7 @@ import (
 
 // EmbeddingConfig selects and configures the embedding provider.
 type EmbeddingConfig struct {
-	Provider  string // "openai", "siliconflow", "hash"
+	Provider  string // "openai", "siliconflow", "ollama", "hash"
 	APIKey    string
 	BaseURL   string
 	Model     string
@@ -49,6 +49,18 @@ type RecallConfig struct {
 	// IncludeInferred recalls facts asserted by the assistant or by inference.
 	// User-asserted facts are always eligible. Default is false.
 	IncludeInferred bool
+	// RerankTopN is how many already-ranked facts are sent to an optional
+	// reranker. Zero disables the pass even when a reranker is installed.
+	RerankTopN int
+}
+
+// RerankConfig selects an optional HTTP reranker. Provider "off" (the default)
+// installs nothing, so recall stays on the hybrid score.
+type RerankConfig struct {
+	Provider string // "off" or "http"
+	URL      string
+	APIKey   string
+	Model    string
 }
 
 // ProfileConfig controls the always-on profile injected independently of the
@@ -94,6 +106,7 @@ type Config struct {
 	Embedding  EmbeddingConfig
 	Extraction ExtractionConfig
 	Recall     RecallConfig
+	Rerank     RerankConfig
 	Profile    ProfileConfig
 	Storage    StorageConfig
 	LLM        LLMConfig
@@ -159,6 +172,13 @@ func newConfig() *Config {
 			Fusion:           normalizeFusion(envString("MEMORI_RECALL_FUSION", "weighted")),
 			RRFK:             envInt("MEMORI_RECALL_RRF_K", 60),
 			IncludeInferred:  envBool("MEMORI_RECALL_INCLUDE_INFERRED", false),
+			RerankTopN:       rerankTopN(),
+		},
+		Rerank: RerankConfig{
+			Provider: normalizeRerankProvider(envString("MEMORI_RERANK", "off")),
+			URL:      envString("MEMORI_RERANK_URL", ""),
+			APIKey:   envString("MEMORI_RERANK_API_KEY", ""),
+			Model:    envString("MEMORI_RERANK_MODEL", ""),
 		},
 		Profile: ProfileConfig{
 			Budget:         envInt("MEMORI_PROFILE_BUDGET", 200),
@@ -189,6 +209,27 @@ func (c *Config) snapshot() configSnapshot {
 		Recall:        c.Recall,
 		Profile:       c.Profile,
 	}
+}
+
+func normalizeRerankProvider(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "http":
+		return "http"
+	default:
+		return "off"
+	}
+}
+
+// rerankTopN defaults to 20 only when the HTTP reranker is selected and the
+// caller did not set MEMORI_RERANK_TOP_N. An explicit 0 keeps the pass off.
+func rerankTopN() int {
+	if _, set := os.LookupEnv("MEMORI_RERANK_TOP_N"); set {
+		return envInt("MEMORI_RERANK_TOP_N", 0)
+	}
+	if normalizeRerankProvider(envString("MEMORI_RERANK", "off")) == "http" {
+		return 20
+	}
+	return 0
 }
 
 func normalizeFusion(v string) string {

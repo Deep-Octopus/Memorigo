@@ -430,9 +430,10 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `MEMORI_EMBEDDING_PROVIDER` | `hash` | `hash` / `openai` / `siliconflow` |
-| `MEMORI_EMBEDDING_API_KEY` | — | 远程嵌入密钥 |
-| `MEMORI_EMBEDDING_MODEL` | 提供商默认 | 如 `text-embedding-3-small`、`BAAI/bge-m3` |
+| `MEMORI_EMBEDDING_PROVIDER` | `hash` | `hash` / `openai` / `siliconflow` / `ollama` |
+| `MEMORI_EMBEDDING_API_KEY` | — | 远程嵌入密钥。Ollama 默认为空 |
+| `MEMORI_EMBEDDING_BASE_URL` | 提供商默认 | Ollama 默认 `http://127.0.0.1:11434` |
+| `MEMORI_EMBEDDING_MODEL` | 提供商默认 | 如 `text-embedding-3-small`、`BAAI/bge-m3`、`nomic-embed-text` |
 | `MEMORI_EMBEDDING_DIMENSION` | `0`（提供商默认） | 自定义维度 |
 | `MEMORI_EXTRACTION_PROVIDER` | `heuristic` | `heuristic` / `llm` / `off` |
 | `MEMORI_EXTRACTION_MODEL` | 最近一次聊天模型 | LLM 抽取模型 |
@@ -448,6 +449,10 @@ go test ./memori -run '^$' -bench 'Benchmark(Recall|BuildContext)1000' -benchmem
 | `MEMORI_RECALL_MIN_SIMILARITY` | `0.10` | 最低余弦相似度闸门 |
 | `MEMORI_RECALL_WEIGHT_*` | `0.60/0.20/0.10/0.10` | 相似度/词法/新近度/频率权重 |
 | `MEMORI_RECALL_RECENCY_HALF_LIFE` | `168h` | 新近度半衰期 |
+| `MEMORI_RERANK` | `off` | `off` 或 `http`。HTTP 失败时保持混合排序 |
+| `MEMORI_RERANK_URL` | — | 完整 rerank 端点，如 `https://api.jina.ai/v1/rerank` |
+| `MEMORI_RERANK_MODEL` | — | 如 `BAAI/bge-reranker-v2-m3` |
+| `MEMORI_RERANK_TOP_N` | HTTP 时 `20`，否则 `0` | 送去重排的候选数。`0` 关闭 |
 
 完整列表见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与源码 `memori/config.go`。
 
@@ -493,7 +498,7 @@ n, _ := m.Reindex(ctx)    // 嵌入模型/维度变化后重建
 ```text
 memori/       Memori 门面、Writer、增强流水线、召回排序、MMR、Profile、上下文组装、抽取器、OpenAI 兼容层
 storage/      Repos 抽象、SQL/Mongo 实现、迁移、事务
-embed/        嵌入接口、hash/OpenAI/硅基流动、LRU 缓存、HTTP 重试
+embed/        嵌入接口、hash/OpenAI/硅基流动/Ollama、可选 HTTP rerank、LRU、HTTP 重试
 textutil/     归一化、分词（英文 + CJK bigram）、句子切分、token 估算
 mcpserver/    MCP 工具面 + stdio/HTTP 适配
 eval/         确定性评测场景、报告、JSON 输出
@@ -528,7 +533,7 @@ docs/         架构、MCP、评测、路线图
 2. ANN / FTS5 候选 + RRF，降低大规模召回延迟
 3. 时态 v3：`valid_from/valid_to`、`source_message_id`、置信度
 4. 多租户（org/app）+ RLS + 导出/删除合规
-5. 巩固/遗忘 job、本地嵌入/reranker
+5. 隐私导出/删除、REST API、MCP 配额与审计
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

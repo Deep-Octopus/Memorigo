@@ -76,7 +76,7 @@ flowchart TB
 | 上下文 | `memori/context.go` / `memori/profile.go` | Profile + 事实 + 原始消息三通道、MMR、token 预算、覆盖率、引用、裁剪 |
 | 注入 | `memori/memory_prompt.go` | 查询提取、`BuildContext`、模板渲染、消息插入 |
 | 存储 | `storage/interfaces.go` | `Repos` / `Transactional` 与六个 repo 接口 |
-| 嵌入 | `embed/` | hash / OpenAI / 硅基流动、LRU、HTTP 重试 |
+| 嵌入 | `embed/` | hash / OpenAI / 硅基流动 / Ollama、可选 HTTP rerank、LRU、HTTP 重试 |
 | 文本 | `textutil/` | 归一化、分词、CJK bigram、句子切分、token 估算 |
 | MCP | `mcpserver/` | 六个记忆工具、stdio 与 stateless Streamable HTTP 适配 |
 | 评测 | `eval/` | 确定性场景、报告、JSON 输出 |
@@ -252,9 +252,10 @@ Enqueue (non-blocking)
 | `hash` | `feature-hash-v1` | 256 | 特征哈希：unigram + 相邻 token bigram，带符号，L2 归一化 |
 | `openai` | `text-embedding-3-small` | 1536 | 仅 `text-embedding-3*` 发送 `dimensions` |
 | `siliconflow` | `BAAI/bge-m3` | 1024 | 批量数组输入 |
+| `ollama` | `nomic-embed-text` | 768 | 本机 `POST /api/embed`；不下载模型。配置了维度且响应不一致时拒绝写入 |
 
 - `CachedEmbedder` 提供 LRU；批量请求只嵌入未命中的文本，再按原顺序拼回。
-- HTTP 层对 429/5xx 最多重试 2 次，尊重 `Retry-After`；响应按 `index` 排序，避免提供商乱序。
+- HTTP 层对 429/5xx 最多重试 2 次，尊重 `Retry-After`。OpenAI 兼容响应按 `index` 排序。Ollama `/api/embed` 按请求顺序返回。
 - 维度治理：事实行记录 model/dim；`Reindex` 只处理与当前 provider 不一致的行。
 - 余弦相似度对零向量、长度不一致、NaN 做防御，并 clamp 到 `[-1, 1]`。
 
@@ -295,6 +296,7 @@ score = wSim*sim + wLex*lex + wRec*rec + wFreq*freq
 - `score < MinScore` 丢弃。
 - 排序：score 降序 → 新近度 → 频率 → ID。
 - 空查询：按新近度/频率返回，适合“最近记住了什么”。
+- 可选 rerank：`MEMORI_RERANK=http` 时，对已经通过闸门的前 `MEMORI_RERANK_TOP_N` 条（HTTP 模式默认 20）再请求一次兼容 Jina/Cohere 的 `/rerank`。失败或返回长度不对时保持原顺序。开启后 `Fact.Score` 变成 `(0, 1]` 的名次分，相似度与词法分仍保留。默认关闭。
 
 ### 7.4 注入
 

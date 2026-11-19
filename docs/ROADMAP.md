@@ -174,7 +174,7 @@ eval/
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
 5. **MCP 生产治理**：HTTP 已有 Bearer 鉴权和 TLS 入口，但没有 OAuth、按工具授权、配额与审计日志。
 6. **巩固/遗忘**：✅ `Maintain` / `Restore` 按 TTL 与提及次数过期并可恢复。没有后台 LLM 摘要，也没有自动调度；调用方在空闲时显式跑一遍。
-7. **本地嵌入/重排**：默认 hash 只适合开发；生产需 Ollama/ONNX 或 API。
+7. **本地嵌入/重排**：✅ Ollama `POST /api/embed` 与可选 HTTP rerank（默认关闭）。没有 ONNX，也没有把模型打进二进制；Ollama 需要本机已经拉好模型。
 8. **REST 服务层**：MCP 已覆盖 Agent 客户端，通用 HTTP API 尚未提供。
 
 ---
@@ -189,7 +189,7 @@ eval/
 |---|---|---|---|---|
 | P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付） | 5 | 中 | 一条命令产出 accuracy/latency/token/$ 报告；配置哈希可复现 |
 | P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引；稠密仍是有界扫描，pgvector 未接） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
-| P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付，`MEMORI_RECALL_FUSION=rrf`，默认可回滚到加权融合；rerank 仍未做） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
+| P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付；✅ HTTP rerank 默认关闭，失败回退加权/RRF 顺序。没有内置 cross-encoder） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
 | P0-4 | **时态 v3：valid_from/valid_to + source_message_id**（✅ 已交付） | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
 | P0-5 | **多租户最小闭环**（✅ 应用层 org/app 隔离已交付；数据库 RLS 未做） | 5 | 中 | `org_id/app_id` 进入 schema；跨租户泄漏测试为 0 |
 
@@ -265,7 +265,7 @@ asserted_by       TEXT NOT NULL DEFAULT 'user'  -- user / assistant / inferred
 | P1-3 | **MCP server**（✅ stdio + HTTP + Bearer 已交付） | 4 | 中 | Claude Code / Cursor 可读写；工具有集成测试 |
 | P1-4 | **框架适配**：Eino / Genkit 薄适配 | 3 | 低 | 示例可运行；不绑定框架抽象 |
 | P1-5 | **巩固/遗忘**（✅ `Maintain`/`Restore`：TTL + 提及次数保护，可 dry-run、可恢复；无 LLM 摘要、无自动调度） | 3 | 中 | 过期事实离开召回，`Restore` 后回来；高频事实保留 |
-| P1-6 | **本地嵌入 / reranker** | 3 | 低到中 | 无 API key 可运行；模型版本锁定 |
+| P1-6 | **本地嵌入 / reranker**（✅ Ollama HTTP 嵌入，模型名由 `MEMORI_EMBEDDING_MODEL` 锁定；HTTP rerank 默认关闭。无 API key 时仍走 hash） | 3 | 低到中 | 无 API key 可运行；模型版本由调用方固定 |
 | P1-7 | **隐私与合规**：PII 脱敏、导出、crypto-shredding | 4 | 中 | 删除可证明；导出格式稳定 |
 
 #### P1-1 已交付 API

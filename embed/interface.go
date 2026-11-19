@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 )
 
 var (
@@ -32,7 +33,7 @@ type Embedder interface {
 
 // Config configures an embedder.
 type Config struct {
-	Provider  string // "openai", "siliconflow", "hash" (offline fallback)
+	Provider  string // "openai", "siliconflow", "ollama", "hash" (offline fallback)
 	APIKey    string
 	BaseURL   string
 	Model     string
@@ -45,11 +46,13 @@ type Config struct {
 // CacheSize is positive.
 func NewEmbedder(config Config) Embedder {
 	var e Embedder
-	switch config.Provider {
+	switch strings.ToLower(strings.TrimSpace(config.Provider)) {
 	case "openai":
 		e = NewOpenAIEmbedder(config)
 	case "siliconflow":
 		e = NewSiliconFlowEmbedder(config)
+	case "ollama":
+		e = NewOllamaEmbedder(config)
 	case "hash":
 		fallthrough
 	default:

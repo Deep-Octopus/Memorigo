@@ -33,6 +33,9 @@ type Memori struct {
 	Storage      *storage.Manager
 	Augmentation *AugmentationManager
 	Embedder     embed.Embedder
+	// Reranker is optional. Nil keeps hybrid ranking. A failing reranker also
+	// falls back to that order.
+	Reranker embed.Reranker
 
 	OpenAI *OpenAIProvider
 
@@ -94,6 +97,14 @@ func New(opts ...Option) *Memori {
 			CacheSize: cfg.CacheSize,
 		})
 	}
+	if m.Reranker == nil && strings.EqualFold(m.Config.Rerank.Provider, "http") {
+		rc := m.Config.Rerank
+		m.Reranker = embed.NewHTTPReranker(embed.RerankConfig{
+			URL:    rc.URL,
+			APIKey: rc.APIKey,
+			Model:  rc.Model,
+		})
+	}
 	if m.extractor == nil {
 		m.extractor = NewExtractor(m)
 	}
@@ -122,6 +133,12 @@ func WithStorageConn(conn any) Option {
 // providers).
 func WithEmbedder(e embed.Embedder) Option {
 	return func(m *Memori) { m.Embedder = e }
+}
+
+// WithReranker installs an optional second-stage ranker. Recall uses it only
+// when Recall.RerankTopN is positive.
+func WithReranker(r embed.Reranker) Option {
+	return func(m *Memori) { m.Reranker = r }
 }
 
 // WithExtractor overrides fact extraction.
@@ -371,6 +388,7 @@ func (m *Memori) recallRankedForEntity(ctx context.Context, repos storage.Repos,
 	candidates = visibleFacts(candidates, snap.Recall.IncludeInferred)
 
 	ranked := rankFacts(query, queryEmbedding, candidates, snap.Recall, time.Now())
+	ranked = m.applyRerank(ctx, query, ranked, snap.Recall.RerankTopN)
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
