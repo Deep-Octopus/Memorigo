@@ -135,12 +135,12 @@ go run ./cmd/memorigo-eval -json -filter context
 
 ```text
 eval/
-  datasets/     # 下载脚本 + 校验和，不提交大数据
-  baselines/    # full-context、naive RAG
-  judge/        # LLM-judge + 人工抽检
+  datasets/     # 下载脚本 + 校验和，不提交大数据（脚本已在，JSON 被 gitignore）
+  baselines/    # full-context、naive RAG（内置语料上的 want 命中率已做）
+  judge/        # 可选 HTTP judge，默认关闭；人工抽检仍未做
 ```
 
-验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 16/16 和内置语料上的 full-context / naive RAG 命中率只代表确定性回归，**不可与 LoCoMo/LongMemEval 分数横向比较**。外部数据集目录仍不提交数据，LLM-judge 仍未做。
+验收信号：外部数据集上的 accuracy / recall@k / latency / token / cost 表格，配置哈希与随机种子可复现。当前 16/16 和内置语料上的 full-context / naive RAG 命中率只代表确定性回归，**不可与 LoCoMo/LongMemEval 分数横向比较**。LongMemEval oracle 可以下载并校验，但不在仓库里。`-external-limit` 只做答案字符串是否出现在打包上下文里的抽样，不是论文分数。LLM-judge 是可选 HTTP，默认关闭，不改变通过与否，也不在同步写路径。
 
 ---
 
@@ -168,7 +168,7 @@ eval/
 
 ### 仍缺
 
-1. **外部评测**：✅ 内置场景上的 full-context（最近窗口）与 naive RAG（hash 余弦 top-k）已对照 want 字符串出命中率。仍没有 LoCoMo / LongMemEval，也没有 LLM-judge。
+1. **外部评测**：✅ 内置场景上的 full-context（最近窗口）与 naive RAG（hash 余弦 top-k）已对照 want 字符串出命中率。✅ `eval/datasets/download.sh` 下载 LongMemEval oracle 并校验 SHA-256，文件不进仓库。缺失时内置 16 场景仍决定退出码。`-external-limit` 不是论文分数。✅ LLM-judge 为可选 HTTP，默认关闭，不改变通过与否，也不在同步写路径。没有 LoCoMo，也没有人工抽检。
 2. **ANN 索引**：词法候选已用 FTS5 / GIN / token 索引补上，精确词不再受 2000 条新近窗口限制。稠密检索仍是有界扫描；pgvector HNSW 仍未接（`modernc` 不能加载 `vec0`，默认构建保持纯 Go）。
 3. **时态 v3**：✅ `valid_from/valid_to`、`source_message_id`、`confidence`、`asserted_by` 已落地。非 user 事实默认不进入召回。
 4. **多租户**：✅ `org_id/app_id` 进入 entity，同一 entity id 跨组织泄漏测试为 0。还没有数据库 RLS 策略（应用层隔离）。
@@ -184,11 +184,11 @@ eval/
 
 ### P0：正确性与可证明性（接下来 4–6 周）
 
-> 状态（2026-11-19）：P0-1 的确定性回归与内置语料上的 full-context / naive RAG 对照已完成（`eval/` + 16 场景）。外部数据集与 LLM-judge 仍未做。P0-4 的时态字段已交付。
+> 状态（2026-11-19）：P0-1 的确定性回归与内置语料上的 full-context / naive RAG 对照已完成（`eval/` + 16 场景）。LongMemEval oracle 只通过下载脚本取得，judge 默认关闭。P0-4 的时态字段已交付。
 
 | # | 事项 | Impact | Effort | 验收信号 |
 |---|---|---|---|---|
-| P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付；✅ 内置语料上的 full-context 与 naive RAG want 命中率。无 LLM-judge，无外部数据集） | 5 | 中 | 一条命令产出 accuracy/latency/token 报告；配置可复现 |
+| P0-1 | **评测 harness + 三基线**（✅ 确定性回归已交付；✅ 内置语料上的 full-context 与 naive RAG want 命中率。✅ LongMemEval oracle 下载脚本与校验和，数据不进仓库。✅ 可选 HTTP judge，默认关闭，不改变通过与否。抽样不是论文分数） | 5 | 中 | 一条命令产出 accuracy/latency/token 报告；配置可复现 |
 | P0-2 | **ANN 候选 + FTS5/pgvector**（✅ 词法候选：SQLite FTS5、Postgres GIN、Mongo token 索引；稠密仍是有界扫描，pgvector 未接） | 5 | 中 | recall@10 +10pt，P95 不升；10^5 事实下延迟可控 |
 | P0-3 | **RRF / 可选 rerank**（✅ RRF 已交付；✅ HTTP rerank 默认关闭，失败回退加权/RRF 顺序。没有内置 cross-encoder） | 4 | 低 | 与当前加权融合 A/B；错误率下降且可回滚 |
 | P0-4 | **时态 v3：valid_from/valid_to + source_message_id**（✅ 已交付） | 5 | 中 | 偏好反转、搬家、改名场景正确率 ≥90%；旧事实可追溯 |
@@ -358,9 +358,9 @@ memory_stats(entity_id?)
 
 ### 第 1–2 周：评测地基（✅ 确定性部分完成）
 
-- 已建 `eval/` 与 `cmd/memorigo-eval`，15 个场景进 CI。
+- 已建 `eval/` 与 `cmd/memorigo-eval`，16 个场景进 CI。
 - 已输出表格式与 JSON 报告（accuracy / P95 / token）。
-- 内置语料的 full-context 与 naive RAG want 命中率已交付。待做：LongMemEval dev + 私有场景，以及 LLM-judge。不把外部数据集提交进仓库。
+- 内置语料的 full-context 与 naive RAG want 命中率已交付。LongMemEval oracle 有下载脚本和 SHA-256，JSON 不进仓库。可选 HTTP judge 默认关闭。仍没有私有场景，抽样也不是论文分数。
 
 ### 第 3–5 周：检索升级（下一步）
 

@@ -1,0 +1,34 @@
+[
+  {
+    "question_id": "fixture-color",
+    "question_type": "single-session-user",
+    "question": "What is my favorite color?",
+    "answer": "blue",
+    "question_date": "2026-01-01",
+    "haystack_dates": ["2026-01-01"],
+    "haystack_session_ids": ["s1"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "My favorite color is blue.", "has_answer": true},
+        {"role": "assistant", "content": "Noted."}
+      ]
+    ],
+    "answer_session_ids": ["s1"]
+  },
+  {
+    "question_id": "fixture_abs",
+    "question_type": "single-session-user",
+    "question": "What is my employee id?",
+    "answer": "unknown",
+    "question_date": "2026-01-02",
+    "haystack_dates": ["2026-01-02"],
+    "haystack_session_ids": ["s2"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "I did not mention an employee id."},
+        {"role": "assistant", "content": "Understood."}
+      ]
+    ],
+    "answer_session_ids": []
+  }
+]

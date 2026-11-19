@@ -27,3 +27,10 @@ coverage.html
 # Go workspace
 go.work
 go.work.sum
+
+# Downloaded evaluation sets. The script, checksum, and fixture stay.
+eval/datasets/*
+!eval/datasets/README.md
+!eval/datasets/download.sh
+!eval/datasets/checksums.txt
+!eval/datasets/fixture.json

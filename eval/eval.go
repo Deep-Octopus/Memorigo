@@ -87,6 +87,10 @@ type QueryResult struct {
 	BaselineCompared bool `json:"baseline_compared,omitempty"`
 	FullContextHit   bool `json:"full_context_hit,omitempty"`
 	NaiveRAGHit      bool `json:"naive_rag_hit,omitempty"`
+	// JudgeScore is set only when Options.Judge is configured. It does not
+	// change Passed.
+	JudgeScore *float64 `json:"judge_score,omitempty"`
+	JudgeError string   `json:"judge_error,omitempty"`
 }
 
 // Report aggregates scenario results.
@@ -101,11 +105,16 @@ type Report struct {
 	BaselineQueries int           `json:"baseline_queries,omitempty"`
 	FullContextHits int           `json:"full_context_hits,omitempty"`
 	NaiveRAGHits    int           `json:"naive_rag_hits,omitempty"`
+	JudgeScored     int           `json:"judge_scored,omitempty"`
+	JudgeErrors     int           `json:"judge_errors,omitempty"`
 }
 
 // Options configures a run.
 type Options struct {
 	Scenarios []Scenario
+	// Judge, when set, scores each query after the assertion. It does not
+	// change Passed. Nil keeps the run offline.
+	Judge Judge
 }
 
 var runCounter atomic.Int64
@@ -120,7 +129,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	report := Report{Results: make([]QueryResult, 0, len(scenarios)*2)}
 
 	for _, sc := range scenarios {
-		results, err := runScenario(ctx, sc)
+		results, err := runScenario(ctx, sc, opts.Judge)
 		if err != nil {
 			return report, fmt.Errorf("scenario %s: %w", sc.Name, err)
 		}
@@ -148,6 +157,12 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 				report.NaiveRAGHits++
 			}
 		}
+		if r.JudgeScore != nil {
+			report.JudgeScored++
+		}
+		if r.JudgeError != "" {
+			report.JudgeErrors++
+		}
 	}
 	if len(report.Results) > 0 {
 		report.AvgLatency = totalLatency / time.Duration(len(report.Results))
@@ -166,7 +181,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	return report, nil
 }
 
-func runScenario(ctx context.Context, sc Scenario) ([]QueryResult, error) {
+func runScenario(ctx context.Context, sc Scenario, judge Judge) ([]QueryResult, error) {
 	db, err := sql.Open("sqlite", fmt.Sprintf("file:eval_%s_%d?mode=memory&cache=shared",
 		sanitize(sc.Name), runCounter.Add(1)))
 	if err != nil {
@@ -211,12 +226,14 @@ func runScenario(ctx context.Context, sc Scenario) ([]QueryResult, error) {
 	for _, q := range sc.Queries {
 		start := time.Now()
 		result := QueryResult{Scenario: sc.Name, Query: q.Query}
+		var observed string
 		if q.Context != nil {
-			checkContext(ctx, m, q, &result)
+			observed = checkContext(ctx, m, q, &result)
 		} else {
-			checkRecall(ctx, m, q, &result)
+			observed = checkRecall(ctx, m, q, &result)
 		}
 		result.Latency = time.Since(start)
+		applyJudge(ctx, judge, q, observed, &result)
 		results = append(results, result)
 	}
 	if err := annotateBaselines(ctx, m, sc.Queries, results); err != nil {
@@ -225,7 +242,7 @@ func runScenario(ctx context.Context, sc Scenario) ([]QueryResult, error) {
 	return results, nil
 }
 
-func checkRecall(ctx context.Context, m *memori.Memori, q QueryCase, result *QueryResult) {
+func checkRecall(ctx context.Context, m *memori.Memori, q QueryCase, result *QueryResult) string {
 	limit := q.Limit
 	if limit <= 0 {
 		limit = 10
@@ -233,27 +250,28 @@ func checkRecall(ctx context.Context, m *memori.Memori, q QueryCase, result *Que
 	facts, err := m.Recall(q.Query, limit)
 	if err != nil {
 		result.Reason = "recall error: " + err.Error()
-		return
+		return ""
 	}
 	result.Facts = len(facts)
 	text := joinFacts(facts)
 	if q.ExpectEmpty {
 		if len(facts) != 0 {
 			result.Reason = fmt.Sprintf("expected no facts, got %d: %q", len(facts), text)
-			return
+			return text
 		}
 		result.Passed = true
-		return
+		return text
 	}
 	reason := assertContains(text, q.Want) + assertAvoids(text, q.Avoid)
 	if reason != "" {
 		result.Reason = reason
-		return
+		return text
 	}
 	result.Passed = true
+	return text
 }
 
-func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *QueryResult) {
+func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *QueryResult) string {
 	check := q.Context
 	pkg, err := m.BuildContext(ctx, q.Query, memori.ContextOptions{
 		TokenBudget:           check.Budget,
@@ -272,7 +290,7 @@ func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *Qu
 	})
 	if err != nil {
 		result.Reason = "context error: " + err.Error()
-		return
+		return ""
 	}
 	result.Facts = len(pkg.Facts)
 	result.Profile = pkg.ProfileCount
@@ -282,15 +300,15 @@ func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *Qu
 	result.Truncated = pkg.Truncated
 	if pkg.Tokens > pkg.Budget {
 		result.Reason = fmt.Sprintf("tokens %d exceed budget %d", pkg.Tokens, pkg.Budget)
-		return
+		return pkg.Text
 	}
 	if check.MaxTokens > 0 && pkg.Tokens > check.MaxTokens {
 		result.Reason = fmt.Sprintf("tokens %d exceed max %d", pkg.Tokens, check.MaxTokens)
-		return
+		return pkg.Text
 	}
 	if check.WantInsufficient && !pkg.InsufficientEvidence {
 		result.Reason = fmt.Sprintf("expected insufficient evidence, coverage=%.2f", pkg.Coverage)
-		return
+		return pkg.Text
 	}
 	reason := assertContains(pkg.Text, check.WantText)
 	reason += assertContains(pkg.ProfileText, check.WantProfile)
@@ -309,9 +327,10 @@ func checkContext(ctx context.Context, m *memori.Memori, q QueryCase, result *Qu
 	}
 	if reason != "" {
 		result.Reason = reason
-		return
+		return pkg.Text
 	}
 	result.Passed = true
+	return pkg.Text
 }
 
 func assertContains(text string, wants []string) string {
@@ -378,6 +397,9 @@ func (r Report) String() string {
 	if r.BaselineQueries > 0 {
 		fmt.Fprintf(&b, "baselines (want-string hit rate, hash embedder, no LLM judge): full-context %d/%d, naive-rag %d/%d\n",
 			r.FullContextHits, r.BaselineQueries, r.NaiveRAGHits, r.BaselineQueries)
+	}
+	if r.JudgeScored > 0 || r.JudgeErrors > 0 {
+		fmt.Fprintf(&b, "llm-judge (opt-in, does not change pass/fail): scored %d, errors %d\n", r.JudgeScored, r.JudgeErrors)
 	}
 	return b.String()
 }

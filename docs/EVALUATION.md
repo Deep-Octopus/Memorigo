@@ -14,11 +14,21 @@ go run ./cmd/memorigo-eval
 go run ./cmd/memorigo-eval -json
 go run ./cmd/memorigo-eval -filter context
 make eval
+sh eval/datasets/download.sh
+go run ./cmd/memorigo-eval -external-limit 1
 ```
 
-The CLI exits non-zero when any assertion fails, which makes it suitable for CI.
-`-json` emits per-query results plus aggregate accuracy, latency and token
-metrics.
+The CLI exits non-zero when any builtin assertion fails, which makes it suitable
+for CI. `-json` emits per-query results plus aggregate accuracy, latency and
+token metrics. A missing external file prints `external dataset not present`
+on stderr and does not fail the run. `-external-limit` is a separate sample.
+It does not change the accuracy line.
+
+`MEMORI_EVAL_JUDGE` is empty by default. Set it to an `http://` or `https://`
+URL, or to `http` and put the URL in `MEMORI_EVAL_JUDGE_URL`, to POST
+`{"question","expected","hypothesis"}` and read `{"score": 0..1}`. The score
+is an extra line. It does not change pass/fail, and it is not called while
+storing a memory.
 
 ---
 
@@ -80,7 +90,7 @@ string appears in two packs built from the same subject export:
 Citation markers such as `[fact:` are not required of either pack. Queries
 with no evidence string, including the forget and abstention cases, are left
 out of the denominator. The hash embedder tracks token overlap, so this does
-not measure paraphrases. There is no LLM judge.
+not measure paraphrases. The numbers above were measured with the judge off.
 
 ---
 
@@ -113,15 +123,31 @@ step. Treat these as a baseline, not a capacity claim.
 - **Do not compare** the `16/16` number, or the baseline hit rates, with
   published LoCoMo or LongMemEval scores. The protocols are different.
 
+## External file and judge
+
+`eval/datasets/download.sh` downloads LongMemEval oracle
+(`longmemeval_oracle.json`, 500 questions, evidence sessions only) from
+`xiaowu0162/longmemeval-cleaned` and requires SHA-256
+`821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c`.
+The JSON is gitignored. `fixture.json` is a two-question stand-in for tests,
+not the benchmark.
+
+`-external-limit N` writes those haystacks through the normal conversation
+path and checks whether the answer string appears in the packed context.
+Question ids ending in `_abs` are counted as abstentions and are not hits.
+This is not the LongMemEval protocol and it must not be compared with a
+published score. LoCoMo is not downloaded.
+
 ## Next evaluation step
 
-The roadmap calls for:
+The roadmap still calls for:
 
-1. LongMemEval dev + a private 50–100 case suite. Do not commit those datasets.
-2. LLM-judge plus human spot checks. The builtin full-context and naive-RAG
-   want-string rates are already reported.
+1. A private 50–100 case suite. Do not commit those cases if they contain
+   private text.
+2. Human spot checks beside the opt-in judge. The builtin full-context and
+   naive-RAG want-string rates are already reported.
 3. Recall@k, evidence coverage, abstention and knowledge-update accuracy on
-   that external suite.
+   the external file, with a published protocol.
 4. P50/P95 latency, tokens/query and cost/query with a configuration hash.
 
 See [ROADMAP.md](ROADMAP.md) for the current priority.

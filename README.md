@@ -348,7 +348,7 @@ go run ./cmd/memorigo-eval -json
 make eval
 ```
 
-16 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权、旧事实被短窗口挤出。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。同一条命令会附上 full-context 与 naive RAG 的 want 命中率。
+16 个场景覆盖：偏好召回、覆盖更新、搬家、跨 session、遗忘、噪声抵抗、中文召回、entity 隔离、token 预算、原始证据、跨 session 证据、常驻画像、动态画像开关、覆盖率弃权、旧事实被短窗口挤出。全部使用内存 SQLite + 离线 hash 嵌入，**无 API key、无网络**。同一条命令会附上 full-context 与 naive RAG 的 want 命中率。LongMemEval oracle 用 `sh eval/datasets/download.sh` 下载并校验，不提交进仓库；文件不在时命令仍以这 16 个场景的结果退出。`MEMORI_EVAL_JUDGE` 默认关闭，开启后也不改变通过与否，也不进入写入路径。
 
 ```text
 accuracy: 16/16 (100.0%)  avg latency: 299µs  p95: 470µs  avg tokens: 27
@@ -556,13 +556,13 @@ docs/         架构、MCP、评测、路线图
 - MCP stdio + Streamable HTTP + Bearer 鉴权 + 静态工具授权、进程内配额、JSONL 审计
 - 框架无关适配：`adapter.Apply` 只改发往模型的消息副本
 - 自适应检索：问候、空查询、已被前文覆盖的查询跳过事实召回；开头寒暄会先去掉。不调用模型，也不做多轮检索
+- 外部评测：LongMemEval oracle 的下载脚本和 SHA-256。数据集不在仓库里。可选 HTTP judge 默认关闭，不改变通过与否，也不在同步写路径
 - Docker 镜像 + 跨平台 release 构建
 
 **下一阶段**
 
-1. 外部评测集与 LLM-judge（不把 LoCoMo / LongMemEval 提交进仓库）
-2. 数据库 RLS、OAuth、OTel。PostgreSQL 上的 pgvector 仅在扩展存在时才考虑。稠密 ANN 仍不默认引入 cgo
-3. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。
+1. 数据库 RLS、OAuth、OTel。PostgreSQL 上的 pgvector 仅在扩展存在时才考虑。稠密 ANN 仍不默认引入 cgo
+2. 图扩展和多模态仍不做。程序性规则只保存明文，不执行。`-external-limit` 不是 LongMemEval 论文分数。
 
 详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
@@ -573,7 +573,7 @@ docs/         架构、MCP、评测、路线图
 - 召回目前是候选集 + Go 内打分，没有 ANN 索引；1,000 条事实约 10–11 ms，规模更大时请关注延迟并等待 ANN/FTS5。
 - 常驻画像基于现有 slot 分类与事实原文，不做 LLM 归纳；动态画像默认关闭，避免短期情绪污染长期背景。
 - `Coverage` / `MinCoverage` 是词元覆盖率启发式，不是语义蕴含判断；高风险场景应结合业务规则或 LLM 复核。
-- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里，没有 LLM-judge。
+- 内置评测是确定性回归场景，**不是 LoCoMo / LongMemEval 质量分数**。full-context 与 naive RAG 只比较 want 字符串是否出现在离线 hash 向量的打包结果里。LLM-judge 需显式设置 `MEMORI_EVAL_JUDGE`，默认关闭，且不改变这 16 个场景的通过与否。
 - MCP HTTP 使用 Bearer token。工具授权是进程启动时的静态 allow-list，配额只计本进程，审计是本地 JSONL。没有 OAuth，也没有多租户 RLS。
 - MongoDB 单机部署没有事务语义；需要强一致时请使用 SQL 后端。
 - 启发式抽取偏保守，LLM 抽取更适合高召回场景；两者都可关闭。
